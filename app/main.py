@@ -21,7 +21,22 @@ from .auth import (
 logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
 logger = logging.getLogger("familyfinancials")
 
-app = FastAPI(title="Family Financial Control System", version="1.1.0")
+STARTED_AT = datetime.utcnow().isoformat(timespec="seconds") + "Z"
+
+
+def _database_check():
+    """Return (reachable, error_text). Used by /healthz and the admin diagnostics."""
+    from sqlalchemy import text
+
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        return True, None
+    except Exception as exc:
+        return False, f"{type(exc).__name__}: {exc}"
+
+
+app = FastAPI(title="Family Financial Control System", version="1.2.0")
 
 
 app.add_middleware(
@@ -38,8 +53,8 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.on_event("startup")
 def on_startup():
-    logger.info("Starting Family Financial Control System | storage=%s | %s | persistent=%s",
-                BACKEND, describe_url(), not DATABASE_URL.startswith("sqlite"))
+    logger.info("Starting Family Financial Control System v%s | storage=%s | %s | persistent=%s | started_at=%s",
+                app.version, BACKEND, describe_url(), not DATABASE_URL.startswith("sqlite"), STARTED_AT)
     try:
         models.Base.metadata.create_all(bind=engine)
         from .seed import seed_initial_data
@@ -52,22 +67,15 @@ def on_startup():
 
 @app.get("/healthz")
 def healthz():
-    """Liveness + database check; handy when a deploy fails (open /healthz)."""
-    from sqlalchemy import text
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("SELECT 1"))
-        db_ok, db_error = True, None
-    except Exception as exc:
-        db_ok, db_error = False, f"{type(exc).__name__}: {exc}"
+    """Public liveness probe: no configuration details, safe to expose."""
+    db_ok, _ = _database_check()
     return {
         "status": "ok" if db_ok else "degraded",
         "database_ok": db_ok,
         "backend": BACKEND,
-        "database_url": safe_url(),
-        "database_target": describe_url(),
         "storage_persistent": not DATABASE_URL.startswith("sqlite"),
-        "error": db_error,
+        "version": app.version,
+        "started_at": STARTED_AT,
     }
 
 
@@ -320,10 +328,17 @@ STORAGE_WARNING = (
 @app.get("/api/admin/backup-status", response_model=schemas.BackupStatus)
 def backup_status(db: Session = Depends(get_db), current_user: models.User = Depends(require_admin)):
     """Drives the weekly 'download your Excel backup' reminder."""
+    db_ok, db_error = _database_check()
     status = crud.backup_status(db)
     persistent = _storage_is_persistent()
     status["persistent_storage"] = persistent
     status["storage_note"] = None if persistent else STORAGE_WARNING
+    # Admin-only diagnostics: password-free, and kept out of the public /healthz.
+    status["database_ok"] = db_ok
+    status["database_error"] = db_error
+    status["database_target"] = describe_url()
+    status["app_version"] = app.version
+    status["started_at"] = STARTED_AT
     return status
 
 

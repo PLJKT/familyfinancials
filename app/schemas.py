@@ -150,6 +150,12 @@ class BackupStatus(BaseModel):
     transaction_count: int
     persistent_storage: bool = True
     storage_note: Optional[str] = None
+    # admin-only diagnostics (never exposed on the public /healthz)
+    database_ok: Optional[bool] = None
+    database_error: Optional[str] = None
+    database_target: Optional[str] = None
+    app_version: Optional[str] = None
+    started_at: Optional[str] = None
     history: List[BackupLogOut] = []
 
 

@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Family Financial Control System</title>
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" />
+  <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.3/font/bootstrap-icons.css" rel="stylesheet" />
+  <link href="/static/css/style.css" rel="stylesheet" />
+</head>
+<body>
+<div id="app">
+
+  <!-- ===== Login / Register ===== -->
+  <div id="auth-view" class="auth-container d-none">
+    <div class="card auth-card shadow">
+      <div class="card-body p-4">
+        <h3 class="text-center mb-1">Family Financial Control</h3>
+        <p class="text-center text-muted mb-4">Secure family budget & reporting</p>
+
+        <ul class="nav nav-pills nav-justified mb-4" id="authTabs" role="tablist">
+          <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#loginPane">Login</button></li>
+          <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#registerPane">Register</button></li>
+        </ul>
+
+        <div class="tab-content">
+          <div class="tab-pane fade show active" id="loginPane">
+            <form id="login-form">
+              <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input type="text" class="form-control" id="login-username" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Password</label>
+                <input type="password" class="form-control" id="login-password" required />
+              </div>
+              <button class="btn btn-primary w-100" type="submit">Sign in</button>
+            </form>
+          </div>
+          <div class="tab-pane fade" id="registerPane">
+            <form id="register-form">
+              <div class="mb-3">
+                <label class="form-label">Username</label>
+                <input type="text" class="form-control" id="reg-username" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Email</label>
+                <input type="email" class="form-control" id="reg-email" required />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Full name</label>
+                <input type="text" class="form-control" id="reg-fullname" />
+              </div>
+              <div class="mb-3">
+                <label class="form-label">Password (min 6 chars)</label>
+                <input type="password" class="form-control" id="reg-password" minlength="6" required />
+              </div>
+              <button class="btn btn-success w-100" type="submit">Create account</button>
+              <p class="text-muted small mt-2 mb-0">New accounts require approval by the master admin.</p>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ===== Main App ===== -->
+  <div id="main-view" class="d-none">
+    <nav class="navbar navbar-expand-lg navbar-dark bg-dark">
+      <div class="container-fluid">
+        <a class="navbar-brand" href="#"><i class="bi bi-piggy-bank"></i> Family Finance</a>
+        <button class="navbar-toggler" type="button" data-bs-toggle="collapse" data-bs-target="#navMenu"><span class="navbar-toggler-icon"></span></button>
+        <div class="collapse navbar-collapse" id="navMenu">
+          <ul class="navbar-nav me-auto">
+            <li class="nav-item"><a class="nav-link active" data-page="dashboard" href="#">Dashboard</a></li>
+            <li class="nav-item"><a class="nav-link" data-page="transactions" href="#">Transactions</a></li>
+            <li class="nav-item"><a class="nav-link" data-page="reports" href="#">Reports</a></li>
+            <li class="nav-item" id="nav-admin" style="display:none"><a class="nav-link" data-page="admin" href="#">Admin</a></li>
+          </ul>
+          <span class="navbar-text me-3" id="current-user"></span>
+          <button class="btn btn-outline-light btn-sm" id="logout-btn">Logout</button>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container-fluid mt-4">
+      <div id="alert-area"></div>
+
+      <!-- Dashboard -->
+      <section id="page-dashboard" class="page">
+        <h4 class="mb-3">Dashboard</h4>
+        <div class="row g-3 mb-4" id="kpi-cards"></div>
+        <div class="row g-3">
+          <div class="col-lg-8"><div class="card"><div class="card-body"><h6>12‑month trend</h6><canvas id="trend-chart" height="120"></canvas></div></div></div>
+          <div class="col-lg-4"><div class="card"><div class="card-body"><h6>Totals</h6><canvas id="totals-chart" height="200"></canvas></div></div></div>
+        </div>
+      </section>
+
+      <!-- Transactions -->
+      <section id="page-transactions" class="page d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h4 class="mb-0">Transactions</h4>
+          <button class="btn btn-primary btn-sm" id="add-trx-btn"><i class="bi bi-plus-lg"></i> Add transaction</button>
+        </div>
+        <div class="card mb-3"><div class="card-body">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-2"><label class="form-label small">From</label><input type="date" class="form-control form-control-sm" id="trx-from" /></div>
+            <div class="col-md-2"><label class="form-label small">To</label><input type="date" class="form-control form-control-sm" id="trx-to" /></div>
+            <div class="col-md-3"><label class="form-label small">Category</label><select class="form-select form-select-sm" id="trx-category"><option value="">All</option></select></div>
+            <div class="col-md-2"><label class="form-label small">Type</label><select class="form-select form-select-sm" id="trx-type"><option value="">All</option><option>Income</option><option>Expenses</option><option>Savings</option></select></div>
+            <div class="col-md-3"><button class="btn btn-outline-primary btn-sm w-100" id="trx-filter-btn">Apply filters</button></div>
+          </div>
+        </div></div>
+        <div class="card"><div class="table-responsive"><table class="table table-sm table-striped mb-0" id="trx-table">
+          <thead><tr><th>Date</th><th>Type</th><th>Category</th><th class="text-end">Amount</th><th>Description</th><th></th></tr></thead>
+          <tbody></tbody>
+        </table></div></div>
+      </section>
+
+      <!-- Reports -->
+      <section id="page-reports" class="page d-none">
+        <h4 class="mb-3">Reports</h4>
+        <div class="card mb-3"><div class="card-body">
+          <div class="row g-2 align-items-end">
+            <div class="col-md-2"><label class="form-label small">From</label><input type="date" class="form-control form-control-sm" id="rep-from" /></div>
+            <div class="col-md-2"><label class="form-label small">To</label><input type="date" class="form-control form-control-sm" id="rep-to" /></div>
+            <div class="col-md-3"><label class="form-label small">Categories</label><select multiple class="form-select form-select-sm" id="rep-categories" size="4"></select></div>
+            <div class="col-md-2"><label class="form-label small">Group by</label><select class="form-select form-select-sm" id="rep-group"><option value="month">Month</option><option value="year">Year</option><option value="category">Category</option></select></div>
+            <div class="col-md-3"><button class="btn btn-primary btn-sm w-100" id="rep-run-btn">Generate report</button></div>
+          </div>
+        </div></div>
+        <div class="card mb-3"><div class="card-body"><canvas id="report-chart" height="100"></canvas></div></div>
+        <div class="card"><div class="table-responsive"><table class="table table-sm table-striped mb-0" id="report-table">
+          <thead><tr><th>Key</th><th class="text-end">Income</th><th class="text-end">Expenses</th><th class="text-end">Savings</th><th class="text-end">Net</th></tr></thead>
+          <tbody></tbody>
+        </table></div></div>
+        <div class="mt-3">
+          <button class="btn btn-outline-secondary btn-sm" id="export-csv-btn"><i class="bi bi-filetype-csv"></i> Export CSV</button>
+          <button class="btn btn-outline-secondary btn-sm" id="export-xlsx-btn"><i class="bi bi-file-earmark-excel"></i> Export Excel</button>
+        </div>
+      </section>
+
+      <!-- Admin -->
+      <section id="page-admin" class="page d-none">
+        <h4 class="mb-3">User administration</h4>
+        <div class="card"><div class="table-responsive"><table class="table table-sm table-striped mb-0" id="users-table">
+          <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th><th>Approved</th><th>Active</th><th>Actions</th></tr></thead>
+          <tbody></tbody>
+        </table></div></div>
+      </section>
+
+    </div>
+  </div>
+</div>
+
+<!-- Transaction modal -->
+<div class="modal fade" id="trxModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="trx-form">
+    <div class="modal-header"><h5 class="modal-title" id="trxModalTitle">Add transaction</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="trx-id" />
+      <div class="mb-3"><label class="form-label">Date</label><input type="date" class="form-control" id="trx-date" required /></div>
+      <div class="mb-3"><label class="form-label">Type</label><select class="form-select" id="trx-type-input" required><option>Income</option><option>Expenses</option><option>Savings</option></select></div>
+      <div class="mb-3"><label class="form-label">Category</label><select class="form-select" id="trx-category-input" required></select></div>
+      <div class="mb-3"><label class="form-label">Amount</label><input type="number" step="0.01" class="form-control" id="trx-amount" required /></div>
+      <div class="mb-3"><label class="form-label">Description</label><input type="text" class="form-control" id="trx-description" /></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
+  </form>
+</div></div></div>
+
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="/static/js/app.js"></script>
+</body>
+</html>

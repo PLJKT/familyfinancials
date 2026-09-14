@@ -17,7 +17,7 @@ It imports the existing **887 transactions** from the revised Excel workbook and
 
 ```bash
 # 1. clone the repo
-git clone https://github.com/<your-username>/familyfinancials.git
+git clone https://github.com/PLJKT/familyfinancials.git
 cd familyfinancials
 
 # 2. create a virtual environment

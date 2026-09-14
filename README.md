@@ -72,6 +72,22 @@ Rules enforced by the API:
 > local SQLite file) admins see a red banner explaining that hosted free tiers erase the filesystem
 > on every redeploy/spin‑down. Fix it by pointing `DATABASE_URL` at a real PostgreSQL database.
 
+### If a deploy fails right after adding `DATABASE_URL`
+
+The app prints one password‑free line saying what went wrong, e.g.
+`DATABASE CONNECTION FAILED (attempt 5/5) postgresql://user:***@host/db | OperationalError: ...`
+followed by `RuntimeError: Could not connect to the database. backend=postgresql host=... user=...`.
+Most common causes:
+
+1. the value carries quotes or a leading `psql ` — it must begin exactly with `postgresql://`;
+2. the password is missing or still the literal `<password>` placeholder;
+3. the variable was added to a different service, or was never saved (Render applies it on the next
+   deploy only);
+4. the database refuses the connection (suspended project, IP allow‑list, wrong host).
+
+`GET /healthz` answers the same question live: `"backend":"sqlite"` means `DATABASE_URL` never
+reached the app, while `"database_ok":false` returns the exact driver error.
+
 ---
 
 ## 3. Backup, weekly reminder, and restore

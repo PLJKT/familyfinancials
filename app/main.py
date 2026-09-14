@@ -1,5 +1,6 @@
 import io
 import csv
+import logging
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -10,12 +11,15 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from . import models, schemas, crud, auth, backup_io
-from .database import engine, get_db, SessionLocal, DATABASE_URL
+from .database import engine, get_db, SessionLocal, DATABASE_URL, safe_url, describe_url, BACKEND
 from .auth import (
     authenticate_user, create_access_token, get_current_user,
     require_roles, require_master, require_admin, require_editor, require_downloader,
     ROLE_MASTER, ROLE_ADMIN, ROLE_EDITOR, ROLE_VIEWER, ROLE_DOWNLOADER, ALL_ROLES,
 )
+
+logging.basicConfig(level=logging.INFO, format="%(levelname)s %(name)s: %(message)s")
+logger = logging.getLogger("familyfinancials")
 
 app = FastAPI(title="Family Financial Control System", version="1.1.0")
 
@@ -34,9 +38,37 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.on_event("startup")
 def on_startup():
-    models.Base.metadata.create_all(bind=engine)
-    from .seed import seed_initial_data
-    seed_initial_data()
+    logger.info("Starting Family Financial Control System | storage=%s | %s | persistent=%s",
+                BACKEND, describe_url(), not DATABASE_URL.startswith("sqlite"))
+    try:
+        models.Base.metadata.create_all(bind=engine)
+        from .seed import seed_initial_data
+        seed_initial_data()
+    except Exception:
+        logger.exception("STARTUP FAILED while preparing the database at %s", safe_url())
+        raise
+    logger.info("Startup complete - the app is ready to serve requests.")
+
+
+@app.get("/healthz")
+def healthz():
+    """Liveness + database check; handy when a deploy fails (open /healthz)."""
+    from sqlalchemy import text
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        db_ok, db_error = True, None
+    except Exception as exc:
+        db_ok, db_error = False, f"{type(exc).__name__}: {exc}"
+    return {
+        "status": "ok" if db_ok else "degraded",
+        "database_ok": db_ok,
+        "backend": BACKEND,
+        "database_url": safe_url(),
+        "database_target": describe_url(),
+        "storage_persistent": not DATABASE_URL.startswith("sqlite"),
+        "error": db_error,
+    }
 
 
 # ---------------- Frontend ----------------

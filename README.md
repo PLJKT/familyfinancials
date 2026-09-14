@@ -65,7 +65,12 @@ Rules enforced by the API:
 
 - only the master admin can create an `admin` (or change roles);
 - nobody can create another `master_admin` through the API;
-- only the master admin can reset an `admin`/`master_admin` password.
+- only the master admin can reset an `admin`/`master_admin` password;
+- only the master admin can delete an account, and never their own.
+
+> **Storage warning:** when the app runs without a persistent database (`DATABASE_URL` unset →
+> local SQLite file) admins see a red banner explaining that hosted free tiers erase the filesystem
+> on every redeploy/spin‑down. Fix it by pointing `DATABASE_URL` at a real PostgreSQL database.
 
 ---
 
@@ -154,6 +159,7 @@ On first startup the app seeds these automatically if the database is empty.
 | `GET`  | `/api/users` | List users (admin+). |
 | `POST` | `/api/users` | **Create a user account** (admin+; `admin` role only by master). |
 | `POST` | `/api/users/{id}/password` | Set a new password for a user (admin+). |
+| `DELETE` | `/api/users/{id}` | Delete a family member's account (master only). |
 | `PATCH` | `/api/users/{id}` | Update role / approval / active flag (admin+). |
 | `GET`  | `/api/categories` | List categories. |
 | `POST` | `/api/categories` | Create category (editor+). |

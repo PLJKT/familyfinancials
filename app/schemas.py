@@ -148,6 +148,8 @@ class BackupStatus(BaseModel):
     last_backup_kind: Optional[str] = None
     last_import_at: Optional[datetime] = None
     transaction_count: int
+    persistent_storage: bool = True
+    storage_note: Optional[str] = None
     history: List[BackupLogOut] = []
 
 

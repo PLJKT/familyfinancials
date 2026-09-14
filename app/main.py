@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
 from . import models, schemas, crud, auth, backup_io
-from .database import engine, get_db, SessionLocal
+from .database import engine, get_db, SessionLocal, DATABASE_URL
 from .auth import (
     authenticate_user, create_access_token, get_current_user,
     require_roles, require_master, require_admin, require_editor, require_downloader,
@@ -112,6 +112,29 @@ def reset_password(user_id: int, data: schemas.PasswordReset, db: Session = Depe
     db.commit()
     db.refresh(user)
     return user
+
+
+@app.delete("/api/users/{user_id}")
+def delete_user(user_id: int, db: Session = Depends(get_db),
+                current_user: models.User = Depends(require_master)):
+    """Remove a family member's account (master admin only)."""
+    user = db.query(models.User).filter(models.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="You cannot delete your own account")
+    if user.role == ROLE_MASTER:
+        raise HTTPException(status_code=400, detail="The master admin account cannot be deleted")
+
+    username = user.username
+    # keep history intact: detach rows that reference the user
+    db.query(models.Transaction).filter(models.Transaction.created_by == user_id).update(
+        {models.Transaction.created_by: None}, synchronize_session=False)
+    db.query(models.BackupLog).filter(models.BackupLog.user_id == user_id).update(
+        {models.BackupLog.user_id: None}, synchronize_session=False)
+    db.delete(user)
+    db.commit()
+    return {"ok": True, "deleted": username}
 
 
 @app.patch("/api/users/{user_id}", response_model=schemas.UserOut)
@@ -248,10 +271,28 @@ def export_excel(db: Session = Depends(get_db), current_user: models.User = Depe
 
 
 # ---------------- Backup status / restore ----------------
+def _storage_is_persistent() -> bool:
+    """False when the app writes to a local SQLite file (lost on redeploy/spin-down)."""
+    return not DATABASE_URL.startswith("sqlite")
+
+
+STORAGE_WARNING = (
+    "Storage is NOT persistent: data is kept in a local SQLite file. On hosts such as "
+    "Render's free tier the filesystem is erased on every redeploy and every spin-down, "
+    "so accounts and transactions entered here will disappear. Set the DATABASE_URL "
+    "environment variable to a persistent database (e.g. a free Neon or Supabase "
+    "PostgreSQL) and the problem is solved."
+)
+
+
 @app.get("/api/admin/backup-status", response_model=schemas.BackupStatus)
 def backup_status(db: Session = Depends(get_db), current_user: models.User = Depends(require_admin)):
     """Drives the weekly 'download your Excel backup' reminder."""
-    return crud.backup_status(db)
+    status = crud.backup_status(db)
+    persistent = _storage_is_persistent()
+    status["persistent_storage"] = persistent
+    status["storage_note"] = None if persistent else STORAGE_WARNING
+    return status
 
 
 @app.post("/api/admin/import", response_model=schemas.ImportResult)

@@ -201,4 +201,33 @@ final = json.loads(call("GET", "/api/dashboard", token=admin_tok)[1])
 check("full restore works", s == 200 and final["transaction_count"] == base["transaction_count"],
       f"count={final['transaction_count']}")
 
+print("== 9. delete accounts + storage warning ==")
+s, st = call("GET", "/api/admin/backup-status", token=admin_tok)
+st = json.loads(st)
+check("sqlite storage is flagged as not persistent",
+      st["persistent_storage"] is False and bool(st["storage_note"]),
+      f"persistent={st['persistent_storage']}")
+
+s, d = call("POST", "/api/users", {"username": "tmp" + suffix, "email": f"tmp{suffix}@example.com",
+                                   "full_name": "Temp", "password": "abc12345", "role": "viewer"},
+            token=admin_tok)
+tmp_user = json.loads(d)
+check("throwaway user created", s == 201, f"HTTP {s}")
+
+s, d = call("DELETE", f"/api/users/{tmp_user['id']}", token=admin_tok)
+check("master deletes a user", s == 200, f"HTTP {s}: {d[:80]}")
+
+s, d = call("GET", "/api/users", token=admin_tok)
+names = [u["username"] for u in json.loads(d)]
+check("deleted user is gone", tmp_user["username"] not in names)
+check("master account survives", "admin" in names)
+
+me = json.loads(call("GET", "/api/auth/me", token=admin_tok)[1])
+s, d = call("DELETE", f"/api/users/{me['id']}", token=admin_tok)
+check("cannot delete your own account", s == 400, f"HTTP {s}")
+
+if budi_tok:
+    s, d = call("DELETE", "/api/users/1", token=budi_tok)
+    check("non-master cannot delete users", s == 403, f"HTTP {s}")
+
 print(f"\n===== {ok_count} passed, {fail_count} failed =====")

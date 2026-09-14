@@ -315,8 +315,23 @@ async function loadUsers() {
         <button class="btn btn-sm btn-outline-secondary" onclick="openPasswordReset(${u.id}, '${escapeHtml(u.username)}')">
           <i class="bi bi-key"></i> Password
         </button>
+        ${isMaster() && u.role !== "master_admin" && u.id !== state.user.id ? `
+          <button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${u.id}, '${escapeHtml(u.username)}')">
+            <i class="bi bi-trash"></i>
+          </button>` : ""}
       </td>
     </tr>`).join("");
+}
+
+async function deleteUser(id, username) {
+  if (!confirm(`Delete the account "${username}"? The person will no longer be able to sign in. This cannot be undone.`)) return;
+  try {
+    await api("/api/users/" + id, { method: "DELETE" });
+    showAlert("Account deleted");
+    loadUsers();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
 }
 
 async function changeRole(id, role) {
@@ -429,20 +444,32 @@ function renderBackupStatus(s) {
 
 function renderBackupBanner(s) {
   const el = $("#backup-banner");
-  if (!s || !s.due) { el.innerHTML = ""; return; }
-  const detail = s.last_backup_at
-    ? `The last backup was <strong>${s.days_since_last_backup} day(s)</strong> ago (reminder every ${s.interval_days} days).`
-    : `No backup has been downloaded yet.`;
-  el.innerHTML = `<div class="alert alert-warning d-flex flex-wrap align-items-center gap-2">
-    <i class="bi bi-shield-exclamation fs-5"></i>
-    <div class="flex-grow-1">
-      <strong>Weekly backup reminder.</strong> ${detail}
-      Download the Excel backup and keep it somewhere safe — it can be used to restore all data.
-    </div>
-    <button class="btn btn-sm btn-warning" onclick="downloadBackupNow()">
-      <i class="bi bi-file-earmark-excel"></i> Download Excel backup
-    </button>
-  </div>`;
+  if (!s) { el.innerHTML = ""; return; }
+  let html = "";
+
+  if (s.persistent_storage === false) {
+    html += `<div class="alert alert-danger">
+      <strong><i class="bi bi-exclamation-octagon"></i> Storage warning — data is not saved permanently.</strong>
+      <div class="small mt-1">${escapeHtml(s.storage_note || "")}</div>
+    </div>`;
+  }
+
+  if (s.due) {
+    const detail = s.last_backup_at
+      ? `The last backup was <strong>${s.days_since_last_backup} day(s)</strong> ago (reminder every ${s.interval_days} days).`
+      : `No backup has been downloaded yet.`;
+    html += `<div class="alert alert-warning d-flex flex-wrap align-items-center gap-2">
+      <i class="bi bi-shield-exclamation fs-5"></i>
+      <div class="flex-grow-1">
+        <strong>Weekly backup reminder.</strong> ${detail}
+        Download the Excel backup and keep it somewhere safe — it can be used to restore all data.
+      </div>
+      <button class="btn btn-sm btn-warning" onclick="downloadBackupNow()">
+        <i class="bi bi-file-earmark-excel"></i> Download Excel backup
+      </button>
+    </div>`;
+  }
+  el.innerHTML = html;
 }
 
 async function downloadFile(path, filename) {

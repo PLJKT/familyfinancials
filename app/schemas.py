@@ -14,6 +14,18 @@ class UserCreate(UserBase):
     password: str = Field(min_length=6)
 
 
+class UserAdminCreate(UserCreate):
+    """Admin-created account: active and approved straight away."""
+
+    role: str = "viewer"
+    is_active: bool = True
+    is_approved: bool = True
+
+
+class PasswordReset(BaseModel):
+    new_password: str = Field(min_length=6)
+
+
 class UserOut(UserBase):
     id: int
     role: str
@@ -113,3 +125,40 @@ class SummaryRow(BaseModel):
 class SummaryResponse(BaseModel):
     rows: List[SummaryRow]
     totals: SummaryRow
+
+
+# ---------- Backup / restore ----------
+class BackupLogOut(BaseModel):
+    id: int
+    kind: str
+    username: Optional[str] = None
+    row_count: Optional[int] = None
+    note: Optional[str] = None
+    created_at: datetime
+
+    class Config:
+        from_attributes = True
+
+
+class BackupStatus(BaseModel):
+    interval_days: int
+    due: bool
+    days_since_last_backup: Optional[float] = None
+    last_backup_at: Optional[datetime] = None
+    last_backup_kind: Optional[str] = None
+    last_import_at: Optional[datetime] = None
+    transaction_count: int
+    history: List[BackupLogOut] = []
+
+
+class ImportResult(BaseModel):
+    ok: bool
+    sheet: str
+    imported: int
+    deleted: int
+    categories_created: int
+    categories_updated: int
+    rows_read: int
+    skipped_rows: List[dict] = []
+    warnings: List[str] = []
+

@@ -8,17 +8,37 @@ let state = {
   totalsChart: null,
   reportChart: null,
   currentPage: "dashboard",
+  backup: null,
 };
 
 // ---------- helpers ----------
 function $(sel) { return document.querySelector(sel); }
 function $$(sel) { return document.querySelectorAll(sel); }
 
+function escapeHtml(value) {
+  return String(value == null ? "" : value)
+    .replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;").replace(/'/g, "&#39;");
+}
+
 function showAlert(message, type = "success") {
   const area = $("#alert-area");
   area.innerHTML = `<div class="alert alert-${type} alert-dismissible fade show" role="alert">
     ${message}<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>`;
-  setTimeout(() => { area.innerHTML = ""; }, 5000);
+  setTimeout(() => { area.innerHTML = ""; }, 6000);
+}
+
+function describeError(data, fallback) {
+  const detail = data && data.detail;
+  if (!detail) return fallback;
+  if (typeof detail === "string") return detail;
+  if (detail.message) {
+    const extra = Array.isArray(detail.errors) && detail.errors.length
+      ? " " + detail.errors.slice(0, 5).map(e => `(row ${e.row}: ${e.error})`).join(" ")
+      : "";
+    return detail.message + extra;
+  }
+  return JSON.stringify(detail);
 }
 
 async function api(path, options = {}) {
@@ -30,10 +50,7 @@ async function api(path, options = {}) {
   const res = await fetch(API + path, { ...options, headers });
   if (res.status === 401) { logout(); throw new Error("Session expired"); }
   const data = res.status === 204 ? null : await res.json().catch(() => null);
-  if (!res.ok) {
-    const detail = data && data.detail ? data.detail : "Request failed";
-    throw new Error(typeof detail === "string" ? detail : JSON.stringify(detail));
-  }
+  if (!res.ok) throw new Error(describeError(data, "Request failed"));
   return data;
 }
 
@@ -52,6 +69,13 @@ function canAdmin() {
 }
 function isMaster() { return state.user && state.user.role === "master_admin"; }
 
+function backupFileName(ext) {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, "0");
+  const stamp = `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}_${p(d.getHours())}${p(d.getMinutes())}`;
+  return `family_finance_backup_${stamp}.${ext}`;
+}
+
 // ---------- auth ----------
 async function login(username, password) {
   const data = await api("/api/auth/login", {
@@ -67,13 +91,14 @@ async function login(username, password) {
 function logout() {
   state.token = null;
   state.user = null;
+  state.backup = null;
   localStorage.removeItem("ff_token");
+  $("#backup-banner").innerHTML = "";
   $("#main-view").classList.add("d-none");
   $("#auth-view").classList.remove("d-none");
 }
 
 async function bootstrapApp() {
-  // verify token and load me
   try {
     state.user = await api("/api/auth/me");
   } catch (e) {
@@ -88,14 +113,14 @@ async function bootstrapApp() {
   state.categories = await api("/api/categories");
   fillCategorySelectors();
   showPage("dashboard");
+  if (canAdmin()) loadBackupStatus();
 }
 
 function fillCategorySelectors() {
-  const opts = state.categories.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
+  const opts = state.categories.map(c => `<option value="${c.id}">${escapeHtml(c.name)}</option>`).join("");
   $("#trx-category-input").innerHTML = opts;
   $("#trx-category").innerHTML = `<option value="">All</option>` + opts;
-  const multi = state.categories.map(c => `<option value="${c.id}">${c.name}</option>`).join("");
-  $("#rep-categories").innerHTML = multi;
+  $("#rep-categories").innerHTML = opts;
 }
 
 // ---------- navigation ----------
@@ -108,7 +133,7 @@ function showPage(page) {
   if (page === "dashboard") loadDashboard();
   if (page === "transactions") loadTransactions();
   if (page === "reports") runReport();
-  if (page === "admin") loadUsers();
+  if (page === "admin") { loadUsers(); loadBackupStatus(); }
 }
 
 // ---------- dashboard ----------
@@ -171,10 +196,10 @@ async function loadTransactions() {
   tbody.innerHTML = trx.map(t => `
     <tr>
       <td>${t.date}</td>
-      <td>${t.type}</td>
-      <td>${t.category ? t.category.name : ""}</td>
+      <td>${escapeHtml(t.type)}</td>
+      <td>${t.category ? escapeHtml(t.category.name) : ""}</td>
       <td class="text-end ${t.type === "Income" ? "text-success" : "text-danger"}">${fmtMoney(t.amount)}</td>
-      <td>${t.description || ""}</td>
+      <td>${escapeHtml(t.description || "")}</td>
       <td class="text-end">
         ${canEdit() ? `<button class="btn btn-sm btn-outline-secondary" onclick="editTransaction(${t.id})"><i class="bi bi-pencil"></i></button>
         <button class="btn btn-sm btn-outline-danger" onclick="deleteTransaction(${t.id})"><i class="bi bi-trash"></i></button>` : ""}
@@ -245,11 +270,11 @@ async function runReport() {
   const data = await api("/api/reports/summary", { method: "POST", body: JSON.stringify(payload) });
   const rows = data.rows;
   $("#report-table tbody").innerHTML = rows.map(r => `
-    <tr><td>${r.key}</td><td class="text-end text-success">${fmtMoney(r.income)}</td>
+    <tr><td>${escapeHtml(r.key)}</td><td class="text-end text-success">${fmtMoney(r.income)}</td>
     <td class="text-end text-danger">${fmtMoney(r.expenses)}</td>
     <td class="text-end text-primary">${fmtMoney(r.savings)}</td>
     <td class="text-end">${fmtMoney(r.net)}</td></tr>
-  `).join("") + `<tr class="fw-bold"><td>${data.totals.key}</td>
+  `).join("") + `<tr class="fw-bold"><td>${escapeHtml(data.totals.key)}</td>
     <td class="text-end">${fmtMoney(data.totals.income)}</td>
     <td class="text-end">${fmtMoney(data.totals.expenses)}</td>
     <td class="text-end">${fmtMoney(data.totals.savings)}</td>
@@ -271,21 +296,26 @@ async function runReport() {
   });
 }
 
-// ---------- admin ----------
+// ---------- admin: users ----------
 async function loadUsers() {
   const users = await api("/api/users");
   $("#users-table tbody").innerHTML = users.map(u => `
     <tr>
-      <td>${u.id}</td><td>${u.username}</td><td>${u.email}</td>
+      <td>${u.id}</td><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.email)}</td>
       <td>
         <select class="form-select form-select-sm" onchange="changeRole(${u.id}, this.value)" ${isMaster() ? "" : "disabled"}>
-          ${["master_admin","admin","editor","viewer","downloader"].map(r =>
+          ${["master_admin", "admin", "editor", "viewer", "downloader"].map(r =>
             `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
         </select>
       </td>
       <td><input type="checkbox" ${u.is_approved ? "checked" : ""} onchange="changeField(${u.id}, 'is_approved', this.checked)"></td>
       <td><input type="checkbox" ${u.is_active ? "checked" : ""} onchange="changeField(${u.id}, 'is_active', this.checked)"></td>
-      <td>${canAdmin() ? `<button class="btn btn-sm btn-outline-primary" onclick="enableUser(${u.id})">Enable</button>` : ""}</td>
+      <td class="text-nowrap">
+        <button class="btn btn-sm btn-outline-primary" onclick="enableUser(${u.id})">Enable</button>
+        <button class="btn btn-sm btn-outline-secondary" onclick="openPasswordReset(${u.id}, '${escapeHtml(u.username)}')">
+          <i class="bi bi-key"></i> Password
+        </button>
+      </td>
     </tr>`).join("");
 }
 
@@ -303,15 +333,187 @@ async function enableUser(id) {
   loadUsers();
 }
 
-// ---------- exports ----------
+function openAddUser() {
+  $("#user-form").reset();
+  $("#new-approved").checked = true;
+  $("#new-active").checked = true;
+  $("#new-password").value = randomPassword();
+  $("#new-role").value = "viewer";
+  const adminOption = $("#new-role-admin");
+  if (adminOption) adminOption.style.display = isMaster() ? "" : "none";
+  new bootstrap.Modal("#userModal").show();
+}
+
+function randomPassword() {
+  const chars = "abcdefghijkmnpqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const bytes = new Uint32Array(10);
+  crypto.getRandomValues(bytes);
+  return Array.from(bytes, b => chars[b % chars.length]).join("");
+}
+
+async function saveUser(e) {
+  e.preventDefault();
+  const payload = {
+    username: $("#new-username").value.trim(),
+    email: $("#new-email").value.trim(),
+    full_name: $("#new-fullname").value.trim(),
+    password: $("#new-password").value,
+    role: $("#new-role").value,
+    is_approved: $("#new-approved").checked,
+    is_active: $("#new-active").checked,
+  };
+  try {
+    const user = await api("/api/users", { method: "POST", body: JSON.stringify(payload) });
+    bootstrap.Modal.getInstance($("#userModal")).hide();
+    showAlert(`Account created for <strong>${escapeHtml(user.username)}</strong> (${escapeHtml(user.role)}).
+      Sign-in details: username <code>${escapeHtml(user.username)}</code> / password
+      <code>${escapeHtml(payload.password)}</code> — share it with them privately.`);
+    loadUsers();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+function openPasswordReset(id, username) {
+  $("#pwd-user-id").value = id;
+  $("#pwd-username").textContent = username;
+  $("#pwd-new").value = randomPassword();
+  new bootstrap.Modal("#pwdModal").show();
+}
+
+async function savePassword(e) {
+  e.preventDefault();
+  const id = $("#pwd-user-id").value;
+  const pwd = $("#pwd-new").value;
+  try {
+    const user = await api(`/api/users/${id}/password`, {
+      method: "POST",
+      body: JSON.stringify({ new_password: pwd }),
+    });
+    bootstrap.Modal.getInstance($("#pwdModal")).hide();
+    showAlert(`New password for <strong>${escapeHtml(user.username)}</strong>:
+      <code>${escapeHtml(pwd)}</code> — share it with them privately.`);
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+// ---------- admin: backup & restore ----------
+async function loadBackupStatus() {
+  if (!canAdmin()) return;
+  try {
+    state.backup = await api("/api/admin/backup-status");
+  } catch (e) {
+    return;
+  }
+  renderBackupBanner(state.backup);
+  renderBackupStatus(state.backup);
+}
+
+function renderBackupStatus(s) {
+  const el = $("#backup-status-text");
+  if (el) {
+    el.textContent = s.last_backup_at
+      ? `Last backup: ${s.days_since_last_backup} day(s) ago · every ${s.interval_days} days`
+      : `No backup downloaded yet · every ${s.interval_days} days`;
+  }
+  const hist = $("#backup-history");
+  if (hist && s.history && s.history.length) {
+    hist.innerHTML = "<strong>Recent activity</strong><br>" + s.history.slice(0, 6).map(h => {
+      const label = { export_excel: "Excel backup downloaded", export_csv: "CSV backup downloaded", import: "Data restored from file" }[h.kind] || h.kind;
+      return `${escapeHtml(h.created_at.replace("T", " ").slice(0, 16))} — ${escapeHtml(label)}
+        ${h.username ? "by " + escapeHtml(h.username) : ""}${h.row_count != null ? ` (${h.row_count} rows)` : ""}`;
+    }).join("<br>");
+  }
+}
+
+function renderBackupBanner(s) {
+  const el = $("#backup-banner");
+  if (!s || !s.due) { el.innerHTML = ""; return; }
+  const detail = s.last_backup_at
+    ? `The last backup was <strong>${s.days_since_last_backup} day(s)</strong> ago (reminder every ${s.interval_days} days).`
+    : `No backup has been downloaded yet.`;
+  el.innerHTML = `<div class="alert alert-warning d-flex flex-wrap align-items-center gap-2">
+    <i class="bi bi-shield-exclamation fs-5"></i>
+    <div class="flex-grow-1">
+      <strong>Weekly backup reminder.</strong> ${detail}
+      Download the Excel backup and keep it somewhere safe — it can be used to restore all data.
+    </div>
+    <button class="btn btn-sm btn-warning" onclick="downloadBackupNow()">
+      <i class="bi bi-file-earmark-excel"></i> Download Excel backup
+    </button>
+  </div>`;
+}
+
 async function downloadFile(path, filename) {
   const res = await fetch(API + path, { headers: { Authorization: "Bearer " + state.token } });
-  if (!res.ok) { showAlert("Export failed", "danger"); return; }
+  if (!res.ok) { showAlert("Download failed", "danger"); return false; }
   const blob = await res.blob();
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url; a.download = filename; a.click();
   URL.revokeObjectURL(url);
+  return true;
+}
+
+async function downloadBackupNow() {
+  const ok = await downloadFile("/api/export/excel", backupFileName("xlsx"));
+  if (ok) {
+    showAlert("Backup downloaded — your reminder is reset for another week.");
+    loadBackupStatus();
+  }
+}
+
+function updateImportButtonState() {
+  const file = $("#import-file").files[0];
+  $("#import-btn").disabled = !(file && $("#import-confirm").checked);
+}
+
+async function runImport() {
+  const file = $("#import-file").files[0];
+  const box = $("#import-result");
+  if (!file) return;
+  if (!$("#import-confirm").checked) {
+    showAlert("Please tick the confirmation box first.", "warning");
+    return;
+  }
+  const btn = $("#import-btn");
+  btn.disabled = true;
+
+  // Safety net: keep a copy of what is in the system right now.
+  box.innerHTML = `<div class="text-muted small">Step 1/2 — saving a copy of the current data…</div>`;
+  await downloadFile("/api/export/excel", "before_restore_" + backupFileName("xlsx"));
+
+  box.innerHTML = `<div class="text-muted small">Step 2/2 — uploading <strong>${escapeHtml(file.name)}</strong> and replacing all data…</div>`;
+  try {
+    const form = new FormData();
+    form.append("file", file);
+    form.append("confirm", "REPLACE_ALL");
+    const out = await api("/api/admin/import", { method: "POST", body: form });
+    const warn = out.warnings && out.warnings.length
+      ? `<div class="mt-2">${out.warnings.map(w => escapeHtml(w)).join("<br>")}</div>` : "";
+    const skipped = out.skipped_rows && out.skipped_rows.length
+      ? `<div class="mt-2 small">${out.skipped_rows.slice(0, 10).map(s => `row ${s.row}: ${escapeHtml(s.error)}`).join("<br>")}</div>` : "";
+    box.innerHTML = `<div class="alert alert-success mb-0">
+      <strong>Restore complete.</strong><br>
+      ${out.imported} transaction(s) imported from sheet “${escapeHtml(out.sheet)}”<br>
+      ${out.deleted} old transaction(s) removed ·
+      ${out.categories_created} category(ies) created ·
+      ${out.categories_updated} updated
+      ${warn}${skipped}
+    </div>`;
+    showAlert("Data replaced from the backup file.");
+    state.categories = await api("/api/categories");
+    fillCategorySelectors();
+    await loadBackupStatus();
+    loadUsers();
+  } catch (err) {
+    box.innerHTML = `<div class="alert alert-danger mb-0">
+      <strong>Nothing was changed.</strong><br>${escapeHtml(err.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    updateImportButtonState();
+  }
 }
 
 // ---------- wire up ----------
@@ -319,24 +521,7 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     try { await login($("#login-username").value, $("#login-password").value); }
-    catch (err) { showAlert(err.message, "danger"); }
-  });
-
-  $("#register-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    try {
-      await api("/api/auth/register", {
-        method: "POST",
-        body: JSON.stringify({
-          username: $("#reg-username").value,
-          email: $("#reg-email").value,
-          full_name: $("#reg-fullname").value,
-          password: $("#reg-password").value,
-        }),
-      });
-      showAlert("Registration successful. Please wait for the master admin to approve your account.");
-      $("#register-form").reset();
-    } catch (err) { showAlert(err.message, "danger"); }
+    catch (err) { showAlert(escapeHtml(err.message), "danger"); }
   });
 
   $("#logout-btn").addEventListener("click", logout);
@@ -347,8 +532,26 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#trx-form").addEventListener("submit", saveTransaction);
   $("#trx-filter-btn").addEventListener("click", loadTransactions);
   $("#rep-run-btn").addEventListener("click", runReport);
-  $("#export-csv-btn").addEventListener("click", () => downloadFile("/api/export/csv", "transactions.csv"));
-  $("#export-xlsx-btn").addEventListener("click", () => downloadFile("/api/export/excel", "transactions.xlsx"));
+  $("#export-csv-btn").addEventListener("click", () => downloadFile("/api/export/csv", backupFileName("csv")));
+  $("#export-xlsx-btn").addEventListener("click", () => downloadFile("/api/export/excel", backupFileName("xlsx")));
+
+  // admin: users
+  $("#add-user-btn").addEventListener("click", openAddUser);
+  $("#user-form").addEventListener("submit", saveUser);
+  $("#gen-password-btn").addEventListener("click", () => { $("#new-password").value = randomPassword(); });
+  $("#pwd-form").addEventListener("submit", savePassword);
+
+  // admin: backup & restore
+  $("#backup-download-btn").addEventListener("click", downloadBackupNow);
+  $("#backup-csv-btn").addEventListener("click", async () => {
+    if (await downloadFile("/api/export/csv", backupFileName("csv"))) {
+      showAlert("CSV backup downloaded.");
+      loadBackupStatus();
+    }
+  });
+  $("#import-file").addEventListener("change", updateImportButtonState);
+  $("#import-confirm").addEventListener("change", updateImportButtonState);
+  $("#import-btn").addEventListener("click", runImport);
 
   // auto-login if token exists
   if (state.token) bootstrapApp(); else $("#auth-view").classList.remove("d-none");

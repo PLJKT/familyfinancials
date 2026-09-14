@@ -6,6 +6,21 @@ from sqlalchemy.orm import relationship
 from .database import Base
 
 
+class BackupLog(Base):
+    """Audit trail of backup downloads / restores, used for the weekly reminder."""
+
+    __tablename__ = "backup_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    # export_excel | export_csv | import
+    kind = Column(String(30), nullable=False)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    username = Column(String(80), nullable=True)
+    row_count = Column(Integer, nullable=True)
+    note = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False, index=True)
+
+
 class User(Base):
     __tablename__ = "users"
 

@@ -1,15 +1,16 @@
 # Family Financial Control System
 
 An online, login‑protected family budget control system built with **FastAPI + SQLite/PostgreSQL**.
-It imports the existing **887 transactions** from the revised Excel workbook and provides:
+It ships with the existing **887 transactions** from the revised Excel workbook and provides:
 
-- Secure login / registration (new accounts need master‑admin approval)
+- Secure login — **accounts are created by the administrator** (there is no public sign‑up)
 - Role‑based access: `master_admin`, `admin`, `editor`, `viewer`, `downloader`
 - Add / edit / delete transactions with category dropdowns
 - Automatic financial reports grouped by month, year, or category
 - Dashboard with KPIs and charts (income, expenses, savings, balance)
-- CSV / Excel export (restricted to downloadable roles)
-- Responsive single‑page UI (Bootstrap 5 + Chart.js)
+- CSV / Excel backup download (restricted to downloadable roles)
+- **Weekly backup reminder** for admins
+- **Restore from a backup file** — upload the downloaded Excel and replace all data (accident recovery)
 
 ---
 
@@ -46,38 +47,79 @@ Open <http://127.0.0.1:8000>.
 
 ---
 
-## 2. Roles
+## 2. Accounts and roles
+
+**Self‑registration is disabled.** The login page has no “Register” tab: an administrator creates
+every account in **Admin → Add user** (username, email, password, role) and the person can sign in
+immediately. Admins can also set a new password for any user from the same page.
 
 | Role | Permissions |
 |------|-------------|
-| `master_admin` | Everything, including approving users and assigning roles. |
-| `admin` | Manage users (except changing roles), full data access, export. |
-| `editor` | Add / edit / delete transactions and categories, export. |
+| `master_admin` | Everything, including assigning roles and resetting admin passwords. |
+| `admin` | Manage users, full data access, backup download, restore. |
+| `editor` | Add / edit / delete transactions and categories, download files. |
 | `viewer` | Read‑only access to dashboard, transactions, reports. |
-| `downloader` | Read‑only **plus** CSV / Excel export. |
+| `downloader` | Read‑only **plus** CSV / Excel download. |
 
-New registrations are created as `viewer` with `is_active = false` and `is_approved = false`.
-The master admin approves them and assigns the appropriate role in the **Admin** page.
+Rules enforced by the API:
+
+- only the master admin can create an `admin` (or change roles);
+- nobody can create another `master_admin` through the API;
+- only the master admin can reset an `admin`/`master_admin` password.
 
 ---
 
-## 3. Deploy to Render.com (free tier)
+## 3. Backup, weekly reminder, and restore
+
+### Weekly reminder
+The Admin page (and a banner on every page) reminds admins to download an Excel backup every
+`BACKUP_REMINDER_DAYS` days (default **7**). Every download is logged, so the reminder resets as soon
+as a backup is taken. The banner also lists the recent backup/restore history.
+
+### The backup file
+`Download Excel backup` produces `family_finance_backup_YYYYMMDD_HHMM.xlsx` with three sheets:
+
+| Sheet | Contents |
+|-------|----------|
+| `Transactions` | `Date, Type, Category, Amount, Description` — one row per transaction |
+| `Categories` | `Category, Type, Group, Description` — keeps category groups on a restore |
+| `Read me` | Human instructions |
+
+The same data is available as CSV (`Download CSV`).
+
+### Restore (accident recovery)
+**Admin → Backup & restore → Restore** uploads a backup and **replaces all existing transactions**:
+
+1. the file is parsed and validated **before** anything is written — a bad file changes nothing;
+2. the whole replace runs in a single database transaction (all or nothing);
+3. unknown category names in the file are created automatically;
+4. malformed rows are reported; the import is refused outright if more than 5 % of rows are unreadable;
+5. the request must send `confirm=REPLACE_ALL`, and the UI additionally asks for a tick‑box confirmation;
+6. the UI automatically downloads a copy of the *current* data before uploading, just in case.
+
+Accepted inputs: `.xlsx`, `.xlsm`, `.csv`, with the columns above (column order and letter case do not
+matter, an extra `ID` column is ignored, `Income`/`Expenses`/`Savings` accept a few aliases, dates are
+`YYYY-MM-DD`, amounts may contain thousand separators).
+
+---
+
+## 4. Deploy to Render.com (free tier)
 
 1. Push this repository to GitHub.
 2. On [Render](https://render.com) click **New → Blueprint** and connect the repo.
-   Render will read `render.yaml` and create:
+   Render reads `render.yaml` and creates:
    - a free PostgreSQL database (`familyfinancials-db`)
    - a free web service (`familyfinancials`)
-3. During creation Render asks for the value of `MASTER_PASSWORD` (marked `sync: false`).
-   Enter a strong password for the `admin` account.
+3. During creation Render asks for `MASTER_PASSWORD` (marked `sync: false`) — enter a strong password.
 4. After deploy, open the service URL and log in with `admin` / your chosen password.
 
-> The app reads `DATABASE_URL` from the environment. If it is absent it falls back to a local SQLite file.
-> On Render the free PostgreSQL database is used automatically.
+> The app reads `DATABASE_URL` from the environment; without it, it falls back to a local SQLite file.
+> **Render's free instances have an ephemeral filesystem**, so make sure `DATABASE_URL` is set (the
+> Blueprint does this) — otherwise every spin‑down or deploy erases data entered through the app.
 
 ---
 
-## 4. Environment variables
+## 5. Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -87,10 +129,11 @@ The master admin approves them and assigns the appropriate role in the **Admin**
 | `MASTER_USERNAME` | `admin` | Master admin username created on first run. |
 | `MASTER_EMAIL` | `admin@example.com` | Master admin email. |
 | `MASTER_PASSWORD` | `admin123` | Master admin password (only used when the account is first created). |
+| `BACKUP_REMINDER_DAYS` | `7` | How often admins are reminded to download a backup. |
 
 ---
 
-## 5. Data import
+## 6. Seed data
 
 The repository includes pre‑prepared seed data in `data/`:
 
@@ -98,17 +141,20 @@ The repository includes pre‑prepared seed data in `data/`:
 - `data/seed_transactions.csv` – all 887 transactions (date, type, category, amount, description).
 
 On first startup the app seeds these automatically if the database is empty.
-To re‑import from scratch, delete the SQLite file (or drop the tables) and restart.
 
 ---
 
-## 6. API overview
+## 7. API overview
 
 | Method | Path | Description |
 |--------|------|-------------|
-| `POST` | `/api/auth/register` | Register a new user (pending approval). |
 | `POST` | `/api/auth/login` | Obtain a JWT. |
+| `POST` | `/api/auth/register` | **Disabled** (403) — accounts are created by admins. |
 | `GET`  | `/api/auth/me` | Current user profile. |
+| `GET`  | `/api/users` | List users (admin+). |
+| `POST` | `/api/users` | **Create a user account** (admin+; `admin` role only by master). |
+| `POST` | `/api/users/{id}/password` | Set a new password for a user (admin+). |
+| `PATCH` | `/api/users/{id}` | Update role / approval / active flag (admin+). |
 | `GET`  | `/api/categories` | List categories. |
 | `POST` | `/api/categories` | Create category (editor+). |
 | `GET`  | `/api/transactions` | List transactions with filters. |
@@ -117,34 +163,37 @@ To re‑import from scratch, delete the SQLite file (or drop the tables) and res
 | `DELETE` | `/api/transactions/{id}` | Delete transaction (editor+). |
 | `POST` | `/api/reports/summary` | Aggregated report (`group_by` = month/year/category). |
 | `GET`  | `/api/dashboard` | KPI data + 12‑month trend. |
-| `GET`  | `/api/users` | List users (admin+). |
-| `PATCH` | `/api/users/{id}` | Update role / approval / active flag (admin+). |
-| `GET`  | `/api/export/csv` | Download CSV (downloader+). |
-| `GET`  | `/api/export/excel` | Download Excel (downloader+). |
+| `GET`  | `/api/export/csv` | Download CSV backup (downloader+). |
+| `GET`  | `/api/export/excel` | Download Excel backup (downloader+) — logs the weekly reminder. |
+| `GET`  | `/api/admin/backup-status` | Reminder state + backup history (admin+). |
+| `POST` | `/api/admin/import` | **Replace all transactions** from a backup file (admin+, needs `confirm=REPLACE_ALL`). |
 
 Interactive docs: `/docs` (Swagger UI).
 
 ---
 
-## 7. Security notes
+## 8. Security notes
 
 - Passwords are hashed with **bcrypt** via `passlib`.
 - JWTs are signed with `SECRET_KEY` — **always** set a strong value in production.
-- New accounts cannot log in until the master admin approves them.
-- Export endpoints are protected by the `downloader` role.
-- For production, prefer PostgreSQL (Render’s free tier) over SQLite, and store `SECRET_KEY` and `MASTER_PASSWORD` as Render environment variables, not in the repo.
+- There is no public sign‑up; only admins create accounts.
+- Export and restore endpoints are protected by role guards; restore additionally requires an explicit
+  confirmation field and is fully validated before writing.
+- For production prefer PostgreSQL and keep `SECRET_KEY` / `MASTER_PASSWORD` in the host's environment
+  variables, never in the repo.
 
 ---
 
-## 8. Project structure
+## 9. Project structure
 
 ```
 familyfinancials/
 ├── app/
 │   ├── main.py        # FastAPI routes
-│   ├── models.py      # SQLAlchemy models
+│   ├── models.py      # SQLAlchemy models (User, Category, Transaction, BackupLog)
 │   ├── schemas.py     # Pydantic schemas
-│   ├── crud.py        # business logic & reports
+│   ├── crud.py        # business logic, reports, restore, backup log
+│   ├── backup_io.py   # export builders + backup file parser (round-trip safe)
 │   ├── auth.py        # JWT, password hashing, role guards
 │   ├── seed.py        # initial admin + data import
 │   └── database.py    # engine / session
@@ -155,8 +204,23 @@ familyfinancials/
 ├── data/
 │   ├── seed_categories.csv
 │   └── seed_transactions.csv
+├── tests_admin_features.py   # end‑to‑end test of users, reminder, restore
 ├── Dockerfile
 ├── render.yaml
 ├── requirements.txt
 └── README.md
 ```
+
+---
+
+## 10. Running the tests
+
+```bash
+# start the app against a scratch database
+DATABASE_URL="sqlite:///./test_import.db" uvicorn app.main:app --port 8002
+# in another shell
+python tests_admin_features.py
+```
+
+The suite covers account creation and role rules, the weekly reminder bookkeeping, Excel and CSV
+round‑trips, hand‑edited files, and every safety rail of the restore endpoint.

@@ -9,3 +9,11 @@ env/
 .env
 .DS_Store
 Thumbs.db
+
+# local backups / test artefacts
+backups/
+.persist_marker.txt
+.last_backup.txt
+test_backup.xlsx
+edited.xlsx
+before_restore_*.xlsx

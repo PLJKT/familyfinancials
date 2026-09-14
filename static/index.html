@@ -11,55 +11,28 @@
 <body>
 <div id="app">
 
-  <!-- ===== Login / Register ===== -->
+  <!-- ===== Login (no public registration: the admin creates accounts) ===== -->
   <div id="auth-view" class="auth-container d-none">
     <div class="card auth-card shadow">
       <div class="card-body p-4">
         <h3 class="text-center mb-1">Family Financial Control</h3>
-        <p class="text-center text-muted mb-4">Secure family budget & reporting</p>
+        <p class="text-center text-muted mb-4">Secure family budget &amp; reporting</p>
 
-        <ul class="nav nav-pills nav-justified mb-4" id="authTabs" role="tablist">
-          <li class="nav-item"><button class="nav-link active" data-bs-toggle="pill" data-bs-target="#loginPane">Login</button></li>
-          <li class="nav-item"><button class="nav-link" data-bs-toggle="pill" data-bs-target="#registerPane">Register</button></li>
-        </ul>
-
-        <div class="tab-content">
-          <div class="tab-pane fade show active" id="loginPane">
-            <form id="login-form">
-              <div class="mb-3">
-                <label class="form-label">Username</label>
-                <input type="text" class="form-control" id="login-username" required />
-              </div>
-              <div class="mb-3">
-                <label class="form-label">Password</label>
-                <input type="password" class="form-control" id="login-password" required />
-              </div>
-              <button class="btn btn-primary w-100" type="submit">Sign in</button>
-            </form>
+        <form id="login-form">
+          <div class="mb-3">
+            <label class="form-label">Username</label>
+            <input type="text" class="form-control" id="login-username" required autocomplete="username" />
           </div>
-          <div class="tab-pane fade" id="registerPane">
-            <form id="register-form">
-              <div class="mb-3">
-                <label class="form-label">Username</label>
-                <input type="text" class="form-control" id="reg-username" required />
-              </div>
-              <div class="mb-3">
-                <label class="form-label">Email</label>
-                <input type="email" class="form-control" id="reg-email" required />
-              </div>
-              <div class="mb-3">
-                <label class="form-label">Full name</label>
-                <input type="text" class="form-control" id="reg-fullname" />
-              </div>
-              <div class="mb-3">
-                <label class="form-label">Password (min 6 chars)</label>
-                <input type="password" class="form-control" id="reg-password" minlength="6" required />
-              </div>
-              <button class="btn btn-success w-100" type="submit">Create account</button>
-              <p class="text-muted small mt-2 mb-0">New accounts require approval by the master admin.</p>
-            </form>
+          <div class="mb-3">
+            <label class="form-label">Password</label>
+            <input type="password" class="form-control" id="login-password" required autocomplete="current-password" />
           </div>
-        </div>
+          <button class="btn btn-primary w-100" type="submit">Sign in</button>
+        </form>
+        <p class="text-muted small mt-3 mb-0 text-center">
+          <i class="bi bi-info-circle"></i> Accounts are created by the family administrator.
+          Ask the admin if you need access.
+        </p>
       </div>
     </div>
   </div>
@@ -84,6 +57,7 @@
     </nav>
 
     <div class="container-fluid mt-4">
+      <div id="backup-banner"></div>
       <div id="alert-area"></div>
 
       <!-- Dashboard -->
@@ -142,11 +116,60 @@
 
       <!-- Admin -->
       <section id="page-admin" class="page d-none">
-        <h4 class="mb-3">User administration</h4>
-        <div class="card"><div class="table-responsive"><table class="table table-sm table-striped mb-0" id="users-table">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h4 class="mb-0">User administration</h4>
+          <button class="btn btn-primary btn-sm" id="add-user-btn"><i class="bi bi-person-plus"></i> Add user</button>
+        </div>
+        <div class="card mb-4"><div class="table-responsive"><table class="table table-sm table-striped mb-0 align-middle" id="users-table">
           <thead><tr><th>ID</th><th>Username</th><th>Email</th><th>Role</th><th>Approved</th><th>Active</th><th>Actions</th></tr></thead>
           <tbody></tbody>
         </table></div></div>
+
+        <h4 class="mb-3">Backup &amp; restore</h4>
+        <div class="card mb-3">
+          <div class="card-header d-flex justify-content-between align-items-center flex-wrap gap-2">
+            <span><i class="bi bi-calendar-week"></i> Weekly backup</span>
+            <span id="backup-status-text" class="small text-muted"></span>
+          </div>
+          <div class="card-body">
+            <p class="small text-muted mb-2">
+              Download the Excel backup at least once a week and keep it outside the website.
+              The file can be uploaded again below to restore everything if something goes wrong.
+            </p>
+            <button class="btn btn-success btn-sm" id="backup-download-btn">
+              <i class="bi bi-file-earmark-excel"></i> Download Excel backup
+            </button>
+            <button class="btn btn-outline-secondary btn-sm" id="backup-csv-btn">
+              <i class="bi bi-filetype-csv"></i> Download CSV
+            </button>
+            <div id="backup-history" class="small text-muted mt-3"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header text-danger"><i class="bi bi-arrow-counterclockwise"></i> Restore: replace all data from a backup file</div>
+          <div class="card-body">
+            <p class="small text-muted">
+              Upload a backup produced by <strong>Download Excel backup</strong> (a <code>.xlsx</code> or <code>.csv</code>
+              file with the columns <em>Date, Type, Category, Amount, Description</em>).
+              <strong>All current transactions are deleted</strong> and replaced by the file's contents.
+              Unknown category names in the file are created automatically.
+            </p>
+            <div class="mb-2">
+              <input type="file" class="form-control form-control-sm" id="import-file" accept=".xlsx,.xlsm,.csv" />
+            </div>
+            <div class="form-check mb-3">
+              <input class="form-check-input" type="checkbox" id="import-confirm" />
+              <label class="form-check-label small" for="import-confirm">
+                I understand that all current transactions will be deleted and replaced by this file.
+              </label>
+            </div>
+            <button class="btn btn-danger btn-sm" id="import-btn" disabled>
+              <i class="bi bi-upload"></i> Replace all data from file
+            </button>
+            <div id="import-result" class="mt-3"></div>
+          </div>
+        </div>
       </section>
 
     </div>
@@ -166,6 +189,57 @@
       <div class="mb-3"><label class="form-label">Description</label><input type="text" class="form-control" id="trx-description" /></div>
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
+  </form>
+</div></div></div>
+
+<!-- Add user modal (admin creates accounts, no self-registration) -->
+<div class="modal fade" id="userModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="user-form">
+    <div class="modal-header"><h5 class="modal-title">Create user account</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="mb-3"><label class="form-label">Username</label><input type="text" class="form-control" id="new-username" required /></div>
+      <div class="mb-3"><label class="form-label">Email</label><input type="email" class="form-control" id="new-email" required /></div>
+      <div class="mb-3"><label class="form-label">Full name</label><input type="text" class="form-control" id="new-fullname" /></div>
+      <div class="mb-3">
+        <label class="form-label">Password (min 6 characters)</label>
+        <div class="input-group">
+          <input type="text" class="form-control" id="new-password" minlength="6" required />
+          <button class="btn btn-outline-secondary" type="button" id="gen-password-btn">Generate</button>
+        </div>
+        <div class="form-text">Share this password with the family member — they can change it later.</div>
+      </div>
+      <div class="mb-3">
+        <label class="form-label">Role</label>
+        <select class="form-select" id="new-role">
+          <option value="viewer">viewer – read-only</option>
+          <option value="downloader">downloader – read-only + export files</option>
+          <option value="editor">editor – add / edit transactions</option>
+          <option value="admin" id="new-role-admin">admin – manage data and users</option>
+        </select>
+      </div>
+      <div class="form-check mb-1">
+        <input class="form-check-input" type="checkbox" id="new-approved" checked />
+        <label class="form-check-label" for="new-approved">Approved (can sign in)</label>
+      </div>
+      <div class="form-check">
+        <input class="form-check-input" type="checkbox" id="new-active" checked />
+        <label class="form-check-label" for="new-active">Active</label>
+      </div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Create user</button></div>
+  </form>
+</div></div></div>
+
+<!-- Password reset modal -->
+<div class="modal fade" id="pwdModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="pwd-form">
+    <div class="modal-header"><h5 class="modal-title">Set a new password</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="pwd-user-id" />
+      <p class="small text-muted">New password for <strong id="pwd-username"></strong></p>
+      <div class="mb-3"><label class="form-label">New password (min 6 characters)</label><input type="text" class="form-control" id="pwd-new" minlength="6" required /></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save password</button></div>
   </form>
 </div></div></div>
 

@@ -1,5 +1,6 @@
-from datetime import date
-from typing import List, Optional
+import os
+from datetime import date, datetime
+from typing import Dict, List, Optional, Tuple
 from sqlalchemy import func, case, cast, String
 from sqlalchemy.orm import Session, joinedload
 
@@ -202,3 +203,163 @@ def dashboard_kpis(db: Session) -> dict:
         "transaction_count": int(tx_count),
         "trend": trend,
     }
+
+
+# ---------- Backup log / weekly reminder ----------
+def log_backup(db: Session, kind: str, user: Optional[models.User] = None,
+               row_count: Optional[int] = None, note: Optional[str] = None) -> models.BackupLog:
+    entry = models.BackupLog(
+        kind=kind,
+        user_id=getattr(user, "id", None),
+        username=getattr(user, "username", None),
+        row_count=row_count,
+        note=note,
+    )
+    db.add(entry)
+    db.commit()
+    db.refresh(entry)
+    return entry
+
+
+def list_backup_logs(db: Session, limit: int = 10) -> List[models.BackupLog]:
+    return (db.query(models.BackupLog)
+            .order_by(models.BackupLog.created_at.desc(), models.BackupLog.id.desc())
+            .limit(limit).all())
+
+
+def backup_interval_days() -> int:
+    try:
+        return max(1, int(os.getenv("BACKUP_REMINDER_DAYS", "7")))
+    except ValueError:
+        return 7
+
+
+def backup_status(db: Session) -> dict:
+    """State for the admin 'download a backup weekly' reminder."""
+    interval = backup_interval_days()
+    last_export = (db.query(models.BackupLog)
+                   .filter(models.BackupLog.kind.in_(["export_excel", "export_csv"]))
+                   .order_by(models.BackupLog.created_at.desc(), models.BackupLog.id.desc())
+                   .first())
+    last_import = (db.query(models.BackupLog)
+                   .filter(models.BackupLog.kind == "import")
+                   .order_by(models.BackupLog.created_at.desc(), models.BackupLog.id.desc())
+                   .first())
+
+    days_since = None
+    if last_export is not None:
+        days_since = (datetime.utcnow() - last_export.created_at).total_seconds() / 86400.0
+
+    count = db.query(func.count(models.Transaction.id)).scalar() or 0
+    return {
+        "interval_days": interval,
+        "due": last_export is None or days_since >= interval,
+        "days_since_last_backup": round(days_since, 2) if days_since is not None else None,
+        "last_backup_at": last_export.created_at if last_export else None,
+        "last_backup_kind": last_export.kind if last_export else None,
+        "last_import_at": last_import.created_at if last_import else None,
+        "transaction_count": int(count),
+        "history": list_backup_logs(db, 10),
+    }
+
+
+# ---------- Restore (replace everything) ----------
+def get_or_create_category(db: Session, name: str, type_hint: Optional[str] = None,
+                           group: Optional[str] = None, description: Optional[str] = None,
+                           cache: Optional[Dict[str, models.Category]] = None,
+                           ) -> Tuple[models.Category, bool, bool]:
+    """Find a category by (case-insensitive) name, creating/updating as needed.
+
+    Returns (category, created, updated).
+    """
+    key = (name or "").strip().casefold()
+    cache = cache if cache is not None else {}
+
+    cat = cache.get(key)
+    if cat is None:
+        cat = db.query(models.Category).filter(func.lower(models.Category.name) == key).first()
+        if cat is None:
+            cat = models.Category(
+                name=(name or "").strip() or "Uncategorized",
+                type=type_hint or "Expenses",
+                group=group or None,
+                description=description or None,
+            )
+            db.add(cat)
+            db.flush()
+            cache[key] = cat
+            return cat, True, False
+
+    updated = False
+    if type_hint and cat.type != type_hint:
+        cat.type = type_hint
+        updated = True
+    if group and cat.group != group:
+        cat.group = group
+        updated = True
+    if description and cat.description != description:
+        cat.description = description
+        updated = True
+    cache[key] = cat
+    return cat, False, updated
+
+
+def replace_all_transactions(db: Session, rows, categories_meta=None,
+                             user_id: Optional[int] = None) -> dict:
+    """Atomically replace every transaction with the rows of a backup file.
+
+    Categories are matched by name (created if missing, never deleted) so that
+    category groups survive an Excel round-trip.
+    """
+    created = updated = 0
+    cache: Dict[str, models.Category] = {}
+
+    def upsert(name, type_hint=None, group=None, description=None):
+        nonlocal created, updated
+        cat, was_created, was_updated = get_or_create_category(
+            db, name, type_hint, group, description, cache)
+        created += 1 if was_created else 0
+        updated += 1 if was_updated else 0
+        return cat
+
+    try:
+        # 1. categories from the metadata sheet (if the file has one)
+        for meta in categories_meta or []:
+            upsert(meta.get("name"), meta.get("type"), meta.get("group"), meta.get("description"))
+
+        # 2. categories referenced by the transaction rows
+        for row in rows:
+            upsert(row.category, row.type)
+        db.flush()
+
+        # 3. wipe and re-insert in one transaction
+        deleted = int(db.query(func.count(models.Transaction.id)).scalar() or 0)
+        db.query(models.Transaction).delete(synchronize_session=False)
+        db.flush()
+
+        new_rows = []
+        for row in rows:
+            cat = cache.get(row.category.strip().casefold())
+            if cat is None:  # defensive: should never happen
+                cat = upsert(row.category, row.type)
+            new_rows.append(models.Transaction(
+                date=row.date,
+                type=row.type,
+                category_id=cat.id,
+                amount=row.amount,
+                description=row.description or None,
+                created_by=user_id,
+            ))
+        db.add_all(new_rows)
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
+
+    return {
+        "deleted": deleted,
+        "imported": len(new_rows),
+        "categories_created": created,
+        "categories_updated": updated,
+    }
+

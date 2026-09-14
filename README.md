@@ -63,6 +63,7 @@ immediately. Admins can also set a new password for any user from the same page.
 
 Rules enforced by the API:
 
+- capabilities are cumulative: `editor` includes everything `downloader` can do, `admin` includes everything `editor` can do, and `viewer` is the only strictly read-only role;
 - only the master admin can create an `admin` (or change roles);
 - nobody can create another `master_admin` through the API;
 - only the master admin can reset an `admin`/`master_admin` password;

@@ -94,63 +94,90 @@ reached the app, while `"database_ok":false` returns the exact driver error.
 
 ---
 
-## 3. Savings and financial statements
+## 3. Accounts, savings and financial statements
 
-### The month-end saving offset (automatic)
+### The model in one minute
 
-A budget only balances if the money left over at the end of a month actually lands in savings. The
-system enforces that: **once a month has ended it posts one automatic Savings entry** so that the
-month's savings equal its surplus:
+Money lives in **accounts** — a cash account and a savings account — and each account starts from an
+**opening balance**: the money the family already held when the records begin. An opening balance is a
+*stock*: it is never income, an expense or a saving. On top of it there are four kinds of movement:
+
+| Movement | What it does | Net worth |
+|----------|--------------|-----------|
+| **Income** | cash up | up |
+| **Expenses** | cash down | down |
+| **Transfer**: *savings* (cash → savings) and *withdrawal* (savings → cash) | moves money between your own accounts | unchanged |
+| **Loan**: `borrow` (cash up, debt up) / `repay` (cash down, debt down) | cash and debt move together | unchanged |
+
+which gives the identity the whole system rests on:
 
 ```
-month-end offset = (income − expenses) − savings already recorded that month
+net worth     = opening balances + (income − expenses)
+income − expenses = Δcash + Δsavings + Δother assets − Δdebt
 ```
 
-- It runs by itself — on startup and after every change to transactions or savings, including a restore.
-- It is **idempotent**: the row is matched by its month and updated in place, never duplicated.
-- The **running month is left alone** until it ends, so the current month shows an *unallocated* figure.
-- If recorded savings exceed the surplus, the offset is negative (money came back out of savings).
-- Offset rows are ordinary Savings transactions labelled `Automatic month-end saving offset for YYYY-MM`,
-  so they appear in reports, exports and the statements like everything else.
-- Admins can re-run it by hand: **Savings → Refresh month-end sweep** (`POST /api/admin/offsets/run`).
+The balance sheet prints that check (`opening balances + lifetime surplus = net worth`), so a missing
+entry shows up immediately — and the **Reconciliation** tab verifies it month by month.
 
-### Recording a saving
+### The month-end sweep (automatic)
 
-1. **Savings → Add saving** — date, amount, whose saving, note. The *Add* button on a month row
-   prefills that month's last day.
-2. **Transactions → Add transaction** with type `Savings` — the amount field is then labelled
-   *Saving amount* and you can choose the family member.
+Once a month has ended the system posts one automatic movement so the month's surplus lands in savings:
 
-Savings are stored as normal `Savings` transactions, so one source of truth feeds the dashboard, the
-reports, the statements and the backup file. The per-member table groups them by the member you chose
-(falling back to whoever entered the row); the automatic sweep is shown as its own column.
+```
+sweep = surplus − savings you recorded yourself that month + your withdrawals
+sweep > 0  ->  a transfer INTO savings
+sweep < 0  ->  a WITHDRAWAL (the month ran a deficit, funded from savings)
+```
+
+- Transfers you record yourself count towards it; transfers **funded by a loan** are excluded, so a
+  loan used to top up savings is not cancelled out again.
+- It is idempotent — one row per closed month, matched by its month and updated in place — and it
+  re-runs on every startup and after every change to transactions, savings, transfers or a restore.
+- The **running month is left alone** until it ends; until then its surplus sits in cash.
+- Admins can re-run it by hand: **Savings → Refresh month-end sweep** (`POST /api/admin/sweep/run`).
+
+### Recording money movements
+
+- **Savings → Add saving** — a saving out of income (date, amount, whose saving, note).
+- **Savings → Transfer / withdraw** — move money between cash and savings, choosing what funded it
+  (`income`, `loan`, `earlier savings`, `other`) so the sweep classifies it correctly.
+- **Statements → Accounts, loans & items → Record borrow / repay** — borrowing and repayments per
+  lender; the outstanding balance maintains itself. Interest is a normal expense entry.
+- **Transactions → Add transaction** — income, expenses or a saving, with the family member attached.
+- **Statements → Accounts, loans & items → Add account** — add another account or set/correct an
+  opening balance (this is where savings accumulated before the records start belong).
 
 ### Income statement (`Statements → Income statement`)
 
-Income lines by category → total income; expenses grouped with subtotals → total expenses; the surplus;
-then savings split into *recorded entries* and *automatic sweep*; and finally what is still unallocated
-(the running month). Period selectors: This month / Last month / This year / All time, or any range.
+Income by category → total income; expenses with group subtotals → total expenses; then the surplus.
+Below the line come the money movements that do not change net worth: transfers in (with the
+loan-funded part called out), withdrawals, net movement in savings, borrowing and repayments.
 
 ### Balance sheet (`Statements → Balance sheet`)
 
 ```
 ASSETS
-  Savings accumulated (closed months)
-  Unallocated cash (running month)
-  ---- Cash and savings ----
-  Property / Vehicle / Investment / … (entered by hand)
+  Cash account        opening + in − out = balance
+  Savings account     opening + in − out = balance
+  --- money in accounts ---
+  Property / vehicle / investment / other (entered by hand)
   TOTAL ASSETS
 LIABILITIES
-  Mortgage / car loan / personal loan / credit card (entered by hand)
+  Loans (outstanding = borrowed − repaid, per lender)
+  Other debts entered by hand
   TOTAL LIABILITIES
 NET WORTH = TOTAL ASSETS − TOTAL LIABILITIES
 ```
 
-Anything not visible in the transaction records — the house, the car, index funds, outstanding loans —
-is entered under **Statements → Assets & liabilities**: `property`, `vehicle`, `investment`, `cash`,
-`other` for assets and `mortgage`, `car_loan`, `personal_loan`, `credit_card`, `other` for liabilities.
-Mark an item as no longer owned or owed and it drops out of the balance sheet without losing history.
-The balance sheet can be dated (*as of*), and **Print / save as PDF** gives you a clean copy.
+Datable (*as of* any day), printable (**Print / save as PDF**), and it shows the identity check at the
+bottom.
+
+### Reconciliation (`Statements → Reconciliation`)
+
+Month by month: income, expenses, surplus, money into and out of savings, borrowings, repayments and
+the resulting cash balance — with a **check** badge on any month whose deficit has no recorded source
+(usually missing income, or a movement nobody entered yet). A clean sheet means every surplus reached
+savings and every gap has a source.
 
 ---
 
@@ -252,9 +279,16 @@ On first startup the app seeds these automatically if the database is empty.
 | `PUT`  | `/api/transactions/{id}` | Update transaction (editor+). |
 | `DELETE` | `/api/transactions/{id}` | Delete transaction (editor+). |
 | `POST` | `/api/reports/summary` | Aggregated report (`group_by` = month/year/category). |
+| `GET`  | `/api/accounts` | Accounts with opening balance, movements and balance. |
+| `POST` | `/api/accounts` · `PUT`/`DELETE` `/api/accounts/{id}` | Add / edit / remove an account (editor+). |
+| `POST` | `/api/transfers` | Move money between cash and savings (`direction` in/out, editor+). |
+| `POST` | `/api/loans` | Record borrowing or a repayment (editor+). |
+| `GET`  | `/api/loans` | Outstanding balance per lender. |
+| `GET`  | `/api/reconciliation` | Month-by-month reconciliation with gap flags. |
 | `GET`  | `/api/savings/summary` | Savings per month **and per family member** + sweep status. |
 | `POST` | `/api/savings/entries` | Record a saving (editor+). |
-| `POST` | `/api/admin/offsets/run` | Re-apply the automatic month-end sweep (admin+). |
+| `POST` | `/api/admin/sweep/run` | Re-apply the automatic month-end sweep (admin+). |
+| `POST` | `/api/admin/migrate-accounts-model` | One-off data migration (master; dry run by default). |
 | `GET`  | `/api/statements/income` | Income statement for a period (`start`, `end`). |
 | `GET`  | `/api/statements/balance-sheet` | Balance sheet (`as_of`). |
 | `GET`  | `/api/assets` · `/api/liabilities` | Balance-sheet items (list for any user; add/update/delete editor+). |
@@ -303,7 +337,9 @@ familyfinancials/
 │   ├── seed_categories.csv
 │   └── seed_transactions.csv
 ├── tests_admin_features.py   # end‑to‑end test of users, reminder, restore
-├── tests_statements.py       # end‑to‑end test of savings, sweep, statements, items
+├── tests_statements.py       # end‑to‑end test of savings, sweep, statements
+├── tests_accounts_model.py   # accounts, opening balances, transfers, loans, migration
+├── run_suites.sh             # runs every suite against its own fresh database
 ├── tests_live_full.py        # full check of a deployed instance
 ├── Dockerfile
 ├── render.yaml

@@ -38,7 +38,9 @@ MAX_ROWS = 500_000
 TYPE_INCOME = "Income"
 TYPE_EXPENSES = "Expenses"
 TYPE_SAVINGS = "Savings"
-CANONICAL_TYPES = (TYPE_INCOME, TYPE_EXPENSES, TYPE_SAVINGS)
+TYPE_WITHDRAWAL = "Withdrawal"
+TYPE_LOAN = "Loan"
+CANONICAL_TYPES = (TYPE_INCOME, TYPE_EXPENSES, TYPE_SAVINGS, TYPE_WITHDRAWAL, TYPE_LOAN, "Transfer")
 
 _TYPE_ALIASES = {
     "income": TYPE_INCOME,
@@ -59,6 +61,21 @@ _TYPE_ALIASES = {
     "savings": TYPE_SAVINGS,
     "tabungan": TYPE_SAVINGS,
     "储蓄": TYPE_SAVINGS,
+    "transfer": TYPE_SAVINGS,
+    "transfer in": TYPE_SAVINGS,
+    "转入": TYPE_SAVINGS,
+    "withdrawal": TYPE_WITHDRAWAL,
+    "withdraw": TYPE_WITHDRAWAL,
+    "take out": TYPE_WITHDRAWAL,
+    "消耗存款": TYPE_WITHDRAWAL,
+    "取出": TYPE_WITHDRAWAL,
+    "loan": TYPE_LOAN,
+    "borrow": TYPE_LOAN,
+    "borrowing": TYPE_LOAN,
+    "借款": TYPE_LOAN,
+    "repay": TYPE_LOAN,
+    "repayment": TYPE_LOAN,
+    "还款": TYPE_LOAN,
 }
 
 _HEADER_ALIASES = {
@@ -90,6 +107,13 @@ _HEADER_ALIASES = {
     "autooffset": "autooffset",
     "autooffsetmonth": "autooffset",
     "monthlyoffset": "autooffset",
+    "direction": "direction",
+    "borrowrepay": "direction",
+    "lender": "lender",
+    "lendername": "lender",
+    "creditor": "lender",
+    "fundedby": "fundedby",
+    "source": "fundedby",
     "id": "id",
     "no": "id",
     "row": "id",
@@ -132,6 +156,9 @@ class ParsedRow:
     description: str
     member: Optional[str] = None            # username of the family member (optional column)
     auto_offset_month: Optional[str] = None  # "YYYY-MM" for automatic sweep rows
+    direction: Optional[str] = None          # borrow | repay (Loan rows)
+    lender: Optional[str] = None             # lender name (Loan rows)
+    funded_by: Optional[str] = None          # income | loan | opening | other (Savings rows)
 
 
 @dataclass
@@ -369,6 +396,9 @@ def parse_backup_file(filename: str, content: bytes) -> ParsedBackup:
             description=_clean_text(cell(row, "description")),
             member=_clean_text(cell(row, "member")) or None,
             auto_offset_month=_clean_month(cell(row, "autooffset")),
+            direction=(_clean_text(cell(row, "direction")) or "").lower() or None,
+            lender=_clean_text(cell(row, "lender")) or None,
+            funded_by=(_clean_text(cell(row, "fundedby")) or "").lower() or None,
         ))
 
     # Optional Categories sheet: keeps type/group metadata on a full restore
@@ -446,7 +476,8 @@ def _member_label(transaction: Any) -> str:
 def build_csv_text(transactions: Iterable[Any]) -> str:
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["Date", "Type", "Category", "Amount", "Description", "Member", "AutoOffset"])
+    writer.writerow(["Date", "Type", "Category", "Amount", "Description", "Member",
+                     "AutoOffset", "Direction", "Lender", "FundedBy"])
     for t in transactions:
         writer.writerow([
             t.date.isoformat(),
@@ -456,6 +487,9 @@ def build_csv_text(transactions: Iterable[Any]) -> str:
             t.description or "",
             _member_label(t),
             getattr(t, "auto_offset_month", None) or "",
+            getattr(t, "direction", None) or "",
+            getattr(t, "lender", None) or "",
+            getattr(t, "funded_by", None) or "",
         ])
     return out.getvalue()
 
@@ -471,7 +505,8 @@ def build_workbook_bytes(transactions: Iterable[Any], categories: Iterable[Any])
     wb = Workbook()
     ws = wb.active
     ws.title = "Transactions"
-    ws.append(["Date", "Type", "Category", "Amount", "Description", "Member", "AutoOffset"])
+    ws.append(["Date", "Type", "Category", "Amount", "Description", "Member",
+               "AutoOffset", "Direction", "Lender", "FundedBy"])
     for t in transactions:
         ws.append([
             t.date.isoformat(),
@@ -481,8 +516,11 @@ def build_workbook_bytes(transactions: Iterable[Any], categories: Iterable[Any])
             t.description or "",
             _member_label(t),
             getattr(t, "auto_offset_month", None) or "",
+            getattr(t, "direction", None) or "",
+            getattr(t, "lender", None) or "",
+            getattr(t, "funded_by", None) or "",
         ])
-    _style_sheet(ws, widths=(12, 12, 30, 16, 50, 14, 12), money_col=4)
+    _style_sheet(ws, widths=(12, 12, 30, 16, 50, 14, 12, 10, 16, 12), money_col=4)
 
     ws2 = wb.create_sheet("Categories")
     ws2.append(["Category", "Type", "Group", "Description"])

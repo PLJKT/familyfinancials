@@ -86,6 +86,10 @@ class TransactionBase(BaseModel):
 class TransactionCreate(TransactionBase):
     # whose saving this is (family member); defaults to the author when omitted
     member_id: Optional[int] = None
+    account_id: Optional[int] = None      # savings account for Savings/Withdrawal, cash for Loan
+    direction: Optional[str] = None       # borrow | repay (Loan only)
+    lender: Optional[str] = None          # lender name (Loan only)
+    funded_by: Optional[str] = None       # income | loan | opening | other (Savings only)
 
 
 class TransactionUpdate(BaseModel):
@@ -95,18 +99,86 @@ class TransactionUpdate(BaseModel):
     amount: Optional[float] = None
     description: Optional[str] = None
     member_id: Optional[int] = None
+    account_id: Optional[int] = None
+    direction: Optional[str] = None
+    lender: Optional[str] = None
+    funded_by: Optional[str] = None
 
 
 class TransactionOut(TransactionBase):
     id: int
     created_by: Optional[int] = None
     member_id: Optional[int] = None
+    account_id: Optional[int] = None
+    direction: Optional[str] = None
+    lender: Optional[str] = None
+    funded_by: Optional[str] = None
     auto_offset_month: Optional[str] = None
     created_at: datetime
     category: CategoryOut
 
     class Config:
         from_attributes = True
+
+
+# ---------- Accounts (money the family holds) ----------
+class AccountBase(BaseModel):
+    name: str
+    kind: str = "cash"                    # cash | savings
+    opening_balance: float = 0.0          # a stock: never income, never an expense
+    opening_date: Optional[date] = None
+    note: Optional[str] = None
+    is_active: bool = True
+
+
+class AccountCreate(AccountBase):
+    pass
+
+
+class AccountUpdate(BaseModel):
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    opening_balance: Optional[float] = None
+    opening_date: Optional[date] = None
+    note: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class AccountOut(AccountBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+# ---------- Transfers between the family's own accounts ----------
+class TransferEntryCreate(BaseModel):
+    """Move money between accounts: into savings, or back out of it."""
+
+    date: date
+    amount: float
+    direction: str = "in"                 # in = cash -> savings | out = savings -> cash
+    account_id: Optional[int] = None      # which savings account
+    member_id: Optional[int] = None
+    note: Optional[str] = None
+    funded_by: Optional[str] = None       # income | loan | opening | other (for direction 'in')
+
+
+# ---------- Loans ----------
+class LoanEntryCreate(BaseModel):
+    date: date
+    amount: float
+    direction: str = "borrow"             # borrow | repay
+    lender: str = "Company"
+    account_id: Optional[int] = None      # cash account receiving / paying the money
+    note: Optional[str] = None
+
+
+class LoanBalanceOut(BaseModel):
+    lender: str
+    borrowed: float
+    repaid: float
+    outstanding: float
 
 
 # ---------- Savings ----------
@@ -118,6 +190,32 @@ class SavingsEntryCreate(BaseModel):
     member_id: Optional[int] = None      # whose saving; defaults to the author
     note: Optional[str] = None
     category_id: Optional[int] = None    # defaults to the 'Saving' category
+    funded_by: Optional[str] = None      # income | loan | opening | other
+    account_id: Optional[int] = None     # which savings account
+
+
+class SweepResult(BaseModel):
+    created: int
+    updated: int
+    removed: int
+    closed_months: List[str] = []
+
+
+class ModelMigrationResult(BaseModel):
+    """Report of the one-off move to the accounts model."""
+
+    ok: bool
+    already_applied: bool
+    accounts_created: List[str] = []
+    opening_balances_set: List[str] = []
+    withdrawals_reclassified: int = 0
+    savings_reclassified: int = 0
+    sweep_rows_fixed: int = 0
+    loan_rows_created: int = 0
+    static_items_removed: List[str] = []
+    notes: List[str] = []
+    before: dict = {}
+    after: dict = {}
 
 
 # ---------- Balance sheet: assets / liabilities ----------

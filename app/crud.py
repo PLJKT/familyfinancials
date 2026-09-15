@@ -102,6 +102,10 @@ def create_transaction(db: Session, data: schemas.TransactionCreate, user_id: Op
         description=data.description,
         created_by=user_id,
         member_id=getattr(data, "member_id", None) or user_id,
+        account_id=getattr(data, "account_id", None),
+        direction=getattr(data, "direction", None),
+        lender=getattr(data, "lender", None),
+        funded_by=getattr(data, "funded_by", None),
     )
     db.add(trx)
     db.commit()
@@ -145,7 +149,9 @@ def build_summary(db: Session, query: schemas.ReportQuery) -> schemas.SummaryRes
 
     income_col = func.coalesce(func.sum(case((models.Transaction.type == "Income", models.Transaction.amount), else_=0.0)), 0.0)
     expense_col = func.coalesce(func.sum(case((models.Transaction.type == "Expenses", models.Transaction.amount), else_=0.0)), 0.0)
-    savings_col = func.coalesce(func.sum(case((models.Transaction.type == "Savings", models.Transaction.amount), else_=0.0)), 0.0)
+    # savings are reported net of withdrawals; loans never touch this statement
+    savings_col = (func.coalesce(func.sum(case((models.Transaction.type == "Savings", models.Transaction.amount), else_=0.0)), 0.0)
+                   - func.coalesce(func.sum(case((models.Transaction.type == "Withdrawal", models.Transaction.amount), else_=0.0)), 0.0))
 
     rows = (
         q.with_entities(key_expr.label("key"), income_col.label("income"),
@@ -178,8 +184,16 @@ def dashboard_kpis(db: Session) -> dict:
         models.Transaction.type == "Income").scalar() or 0.0
     total_expenses = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
         models.Transaction.type == "Expenses").scalar() or 0.0
-    total_savings = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
-        models.Transaction.type == "Savings").scalar() or 0.0
+    # savings and cash come from the accounts, so withdrawals are netted off
+    from . import finance as _finance
+    balances = _finance.account_balances(db)
+    total_savings = balances["savings"]
+    cash_balance = balances["cash"]
+
+    # what moved into savings during the current month (flow, not stock)
+    this_month = _finance.month_of(date.today())
+    month_entry = _finance.month_totals(db).get(this_month, {})
+    savings_in_month = month_entry.get("savings_net", 0.0)
     tx_count = db.query(func.count(models.Transaction.id)).scalar() or 0
 
     # last 12 months trend
@@ -198,7 +212,9 @@ def dashboard_kpis(db: Session) -> dict:
     return {
         "total_income": float(total_income),
         "total_expenses": float(total_expenses),
-        "total_savings": float(total_savings),
+        "total_savings": float(total_savings),          # savings balance (stock)
+        "cash_balance": float(cash_balance),
+        "savings_this_month": float(savings_in_month),  # movement in the running month
         "transaction_count": int(tx_count),
         "trend": trend,
     }
@@ -327,6 +343,10 @@ def replace_all_transactions(db: Session, rows, categories_meta=None,
             return None
         return members.get(str(label).strip().casefold())
 
+    def category_type_for(row_type: str) -> str:
+        """Which family a category belongs to — keeps 'Saving' from being re-typed."""
+        return {"Withdrawal": "Savings", "Transfer": "Savings", "Loan": "Loan"}.get(row_type, row_type)
+
     def upsert(name, type_hint=None, group=None, description=None):
         nonlocal created, updated
         cat, was_created, was_updated = get_or_create_category(
@@ -342,7 +362,7 @@ def replace_all_transactions(db: Session, rows, categories_meta=None,
 
         # 2. categories referenced by the transaction rows
         for row in rows:
-            upsert(row.category, row.type)
+            upsert(row.category, category_type_for(row.type))
         db.flush()
 
         # 3. wipe and re-insert in one transaction
@@ -354,16 +374,25 @@ def replace_all_transactions(db: Session, rows, categories_meta=None,
         for row in rows:
             cat = cache.get(row.category.strip().casefold())
             if cat is None:  # defensive: should never happen
-                cat = upsert(row.category, row.type)
+                cat = upsert(row.category, category_type_for(row.type))
+            row_type = row.type
+            direction = getattr(row, "direction", None)
+            if row_type == "Loan":
+                direction = "repay" if (direction or "").startswith("rep") else "borrow"
+            else:
+                direction = None
             new_rows.append(models.Transaction(
                 date=row.date,
-                type=row.type,
+                type=row_type,
                 category_id=cat.id,
                 amount=row.amount,
                 description=row.description or None,
                 created_by=user_id,
                 member_id=member_id_for(row),
                 auto_offset_month=getattr(row, "auto_offset_month", None),
+                direction=direction,
+                lender=getattr(row, "lender", None) if row_type == "Loan" else None,
+                funded_by=getattr(row, "funded_by", None) if row_type in ("Savings", "Transfer") else None,
             ))
         db.add_all(new_rows)
         db.commit()

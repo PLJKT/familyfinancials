@@ -13,11 +13,14 @@ Thumbs.db
 # local backups / test artefacts
 backups/
 live_check_out.txt
+*_out.txt
+all_suites.txt
 live_full_out.txt
 live_savings_out.txt
 live_check_results.json
 .persist_marker.txt
 .last_backup.txt
 test_backup.xlsx
+round_trip_check.xlsx
 edited.xlsx
 before_restore_*.xlsx

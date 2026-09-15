@@ -143,7 +143,8 @@ function kpiCard(c) {
     <div class="col-6 col-md-4 col-xl">
       <div class="card kpi-card ${c.cls}"><div class="card-body">
         <div class="d-flex justify-content-between align-items-start">
-          <div><div class="text-muted small">${c.label}</div><div class="kpi-value">${c.value}</div></div>
+          <div><div class="text-muted small">${c.label}</div><div class="kpi-value">${c.value}</div>
+            ${c.sub ? `<div class="text-muted small">${c.sub}</div>` : ""}</div>
           <i class="bi ${c.icon} fs-4 text-muted"></i>
         </div>
       </div></div>
@@ -167,7 +168,9 @@ async function loadDashboard() {
   const cards = [
     { label: "Total income", value: fmtMoney(data.total_income), cls: "income", icon: "bi-arrow-down-circle" },
     { label: "Total expenses", value: fmtMoney(data.total_expenses), cls: "expense", icon: "bi-arrow-up-circle" },
-    { label: "Savings", value: fmtMoney(data.total_savings), cls: "savings", icon: "bi-piggy-bank" },
+    { label: "Savings balance", value: fmtMoney(data.total_savings), cls: "savings", icon: "bi-piggy-bank",
+      sub: `this month ${fmtMoney(data.savings_this_month || 0)}` },
+    { label: "Cash balance", value: fmtMoney(data.cash_balance || 0), cls: "balance", icon: "bi-wallet2" },
     { label: "Transactions", value: data.transaction_count, cls: "balance", icon: "bi-list-check" },
   ];
   $("#kpi-cards").innerHTML = cards.map(kpiCard).join("");
@@ -603,35 +606,47 @@ async function loadSavings() {
 
   const t = data.totals || {};
   const closed = data.months.filter(m => m.closed);
+  const sweepNet = (t.sweep_in || 0) - (t.sweep_out || 0);
   $("#savings-kpis").innerHTML = [
-    { label: "Total savings", value: fmtMoney(t.savings_total), cls: "savings", icon: "bi-piggy-bank" },
-    { label: "Recorded by the family", value: fmtMoney(t.savings_manual), cls: "savings", icon: "bi-people" },
-    { label: "Posted by the sweep", value: fmtMoney(t.savings_offset), cls: "balance", icon: "bi-arrow-repeat" },
-    { label: "Months swept", value: String(closed.length), cls: "income", icon: "bi-calendar-check" },
+    { label: "Savings balance", value: fmtMoney(t.closing_balance),
+      sub: `opening ${fmtMoney(t.opening_balance)}`, cls: "savings", icon: "bi-piggy-bank" },
+    { label: "Transferred in", value: fmtMoney(t.savings_in),
+      sub: t.savings_in_loan ? `of which loan-funded ${fmtMoney(t.savings_in_loan)}` : "",
+      cls: "income", icon: "bi-arrow-down-circle" },
+    { label: "Withdrawn", value: fmtMoney(t.withdrawal), cls: "expense", icon: "bi-arrow-up-circle" },
+    { label: "Posted by the sweep", value: fmtMoney(sweepNet),
+      sub: `${closed.length} closed months`, cls: "balance", icon: "bi-arrow-repeat" },
   ].map(kpiCard).join("");
 
   $("#run-offsets-btn").style.display = canAdmin() ? "" : "none";
   $("#add-saving-btn").style.display = canEdit() ? "" : "none";
+  $("#add-transfer-btn-2").style.display = canEdit() ? "" : "none";
 
   const badge = m => m.closed
-    ? (m.offset_applied
+    ? (m.swept
       ? '<span class="badge bg-success-subtle text-success-emphasis">swept</span>'
       : '<span class="badge bg-secondary-subtle text-secondary-emphasis">no sweep</span>')
     : '<span class="badge bg-primary-subtle text-primary-emphasis">running</span>';
 
-  $("#savings-table tbody").innerHTML = [...data.months].reverse().map(m => `
+  $("#savings-table tbody").innerHTML = [...data.months].reverse().map(m => {
+    const sweep = (m.sweep_in || 0) - (m.sweep_out || 0);
+    return `
     <tr>
       <td class="text-nowrap">${monthLabel(m.month)} ${badge(m)}</td>
       <td class="text-end">${fmtMoney(m.income)}</td>
       <td class="text-end">${fmtMoney(m.expenses)}</td>
       <td class="text-end ${m.surplus < 0 ? "text-danger" : ""}">${fmtMoney(m.surplus)}</td>
-      <td class="text-end">${fmtMoney(m.savings_manual)}</td>
-      <td class="text-end ${m.savings_offset < 0 ? "text-danger" : ""}">${fmtMoney(m.savings_offset)}</td>
-      <td class="text-end fw-semibold">${fmtMoney(m.savings_total)}</td>
+      <td class="text-end">${fmtMoney(m.savings_in)}
+        ${m.savings_in_loan ? `<div class="text-muted small">incl. loan ${fmtMoney(m.savings_in_loan)}</div>` : ""}</td>
+      <td class="text-end ${m.withdrawal ? "text-danger" : ""}">${m.withdrawal ? fmtMoney(m.withdrawal) : "—"}</td>
+      <td class="text-end text-muted">${sweep ? fmtMoney(sweep) : "—"}</td>
+      <td class="text-end fw-semibold ${m.savings_net < 0 ? "text-danger" : ""}">${fmtMoney(m.savings_net)}</td>
+      <td class="text-end">${fmtMoney(m.balance)}</td>
       <td class="text-end text-nowrap">
         ${canEdit() ? `<button class="btn btn-sm btn-outline-primary" onclick="openSaving('${m.month}')">Add</button>` : ""}
       </td>
-    </tr>`).join("");
+    </tr>`;
+  }).join("");
 
   $("#savings-members-table thead").innerHTML =
     `<tr><th>Month</th>${members.map(m => `<th class="text-end">${escapeHtml(m.name)}</th>`).join("")}<th class="text-end">Total</th></tr>`;
@@ -645,7 +660,7 @@ async function loadSavings() {
       const sum = data.months.reduce((s, m) => s + ((m.members || {})[String(mm.id)] || 0), 0);
       return `<td class="text-end">${fmtMoney(sum)}</td>`;
     }).join("") +
-    `<td class="text-end">${fmtMoney(t.savings_manual)}</td></tr>`;
+    `<td class="text-end">${fmtMoney((t.savings_in || 0) - (t.savings_in_loan || 0))}</td></tr>`;
   $("#savings-members-table tbody").innerHTML = rows.join("") + totalsRow;
 }
 
@@ -700,19 +715,20 @@ async function runOffsets() {
 
 // ---------- financial statements ----------
 function showStatementTab(tab) {
-  ["income", "balance", "items"].forEach(t => {
+  ["income", "balance", "accounts", "recon"].forEach(t => {
     const el = $("#stmt-" + t);
     if (el) el.classList.toggle("d-none", t !== tab);
   });
   $$("#statement-tabs .nav-link").forEach(a => a.classList.toggle("active", a.dataset.stmt === tab));
   if (tab === "balance") loadBalanceSheet();
-  if (tab === "items") loadItems();
+  if (tab === "accounts") loadAccountsBook();
+  if (tab === "recon") loadReconciliation();
 }
 
 async function loadStatements() {
   if (!$("#bs-asof").value) $("#bs-asof").value = isoDate();
   if (!$("#stmt-from").value && !$("#stmt-to").value) setQuickRange("year", false);
-  await Promise.all([loadIncomeStatement(), loadBalanceSheet(), loadItems()]);
+  await Promise.all([loadIncomeStatement(), loadBalanceSheet(), loadAccountsBook(), loadReconciliation()]);
 }
 
 function setQuickRange(range, reload = true) {
@@ -762,11 +778,18 @@ async function loadIncomeStatement() {
   html += statementRow("Total expenses", rep.expense_total, { cls: "fw-semibold border-top" });
 
   html += statementRow("Surplus (income − expenses)", rep.surplus, { cls: "fw-bold" });
-  html += '<tr class="table-light fw-semibold"><td>SAVINGS</td><td></td></tr>';
-  html += statementRow("Recorded saving entries", rep.savings_manual, { indent: true });
-  html += statementRow("Automatic month-end sweep", rep.savings_offset, { indent: true });
-  html += statementRow("Total savings", rep.savings_total, { cls: "fw-semibold border-top" });
-  html += statementRow("Unallocated (running month)", rep.unallocated, { cls: "text-muted" });
+  const fin = rep.financing || {};
+  html += '<tr class="table-light fw-semibold"><td>BELOW THE LINE — movements, not income</td><td></td></tr>';
+  html += statementRow("Transferred into savings", fin.savings_in || 0, { indent: true });
+  if (fin.savings_in_funded_by_loan) {
+    html += statementRow("of which funded by a loan", fin.savings_in_funded_by_loan,
+      { indent: true, cls: "text-muted" });
+  }
+  html += statementRow("Withdrawn from savings", fin.withdrawals || 0, { indent: true });
+  html += statementRow("Net movement in savings", fin.savings_net || 0, { cls: "fw-semibold" });
+  html += statementRow("Borrowed", fin.loan_borrowed || 0, { indent: true });
+  html += statementRow("Repaid", fin.loan_repaid || 0, { indent: true });
+  html += statementRow("Net worth change", rep.surplus, { cls: "fw-bold border-top" });
   html += "</tbody></table>";
   $("#income-statement").innerHTML = html;
 
@@ -787,9 +810,13 @@ async function loadBalanceSheet() {
 
   let html = '<div class="row g-3"><div class="col-lg-6">';
   html += '<div class="card mb-3"><div class="card-body"><h6>ASSETS</h6><table class="table table-sm mb-0"><tbody>';
-  html += statementRow("Savings accumulated (closed months)", bs.cash_and_savings.savings_accumulated, { indent: true });
-  html += statementRow("Unallocated cash (running month)", bs.cash_and_savings.unallocated_cash, { indent: true });
-  html += statementRow("Cash and savings", bs.cash_and_savings.total, { cls: "fw-semibold" });
+  bs.accounts.forEach(a => {
+    const label = `${a.name}${a.opening_date ? ` (from ${a.opening_date})` : ""}`;
+    html += statementRow(label, a.balance, { cls: "fw-semibold" });
+    html += statementRow(`opening ${fmtMoney(a.opening_balance)} + in ${fmtMoney(a.movements_in)} − out ${fmtMoney(a.movements_out)}`,
+      a.balance, { indent: true, cls: "text-muted" });
+  });
+  html += statementRow("Money in accounts", bs.money_total, { cls: "fw-semibold border-top" });
 
   const byKind = {};
   bs.asset_items.forEach(i => { (byKind[i.kind] = byKind[i.kind] || []).push(i); });
@@ -805,38 +832,81 @@ async function loadBalanceSheet() {
 
   html += '<div class="col-lg-6">';
   html += '<div class="card mb-3"><div class="card-body"><h6>LIABILITIES</h6><table class="table table-sm mb-0"><tbody>';
+  if (bs.loans.length) {
+    bs.loans.forEach(l => {
+      html += statementRow(`${l.lender} (borrowed ${fmtMoney(l.borrowed)} − repaid ${fmtMoney(l.repaid)})`,
+        l.outstanding, { indent: true });
+    });
+  }
   if (bs.liability_items.length) {
     bs.liability_items.forEach(i => {
       const extra = i.interest_rate ? ` — ${i.interest_rate}% p.a.` : "";
       html += statementRow(i.name + extra, i.outstanding, { indent: true });
     });
-  } else {
+  }
+  if (!bs.loans.length && !bs.liability_items.length) {
     html += '<tr><td class="ps-4 text-muted">nothing owed / nothing recorded</td><td></td></tr>';
   }
   html += statementRow("TOTAL LIABILITIES", bs.liabilities_total, { cls: "fw-bold table-light fs-6" });
   html += "</tbody></table></div></div>";
 
+  const check = bs.reconciliation || {};
+  const ok = Math.abs(check.difference || 0) < 1;
   html += `<div class="card"><div class="card-body">
       <div class="d-flex justify-content-between align-items-center">
         <div><h6 class="mb-0">NET WORTH</h6>
-          <div class="text-muted small">Total assets ${fmtMoney(bs.total_assets)} − liabilities ${fmtMoney(bs.liabilities_total)}</div></div>
+          <div class="text-muted small">Assets ${fmtMoney(bs.total_assets)} − liabilities ${fmtMoney(bs.liabilities_total)}</div></div>
         <span class="fs-4 fw-bold ${bs.net_worth < 0 ? "text-danger" : "text-success"}">${fmtMoney(bs.net_worth)}</span>
       </div>
       <hr />
-      <div class="text-muted small">From the transaction records: income ${fmtMoney(bs.from_activity.income)},
-        expenses ${fmtMoney(bs.from_activity.expenses)}, savings ${fmtMoney(bs.from_activity.savings)}.</div>
+      <div class="small ${ok ? "text-success" : "text-danger"}">
+        <i class="bi ${ok ? "bi-check-circle" : "bi-exclamation-triangle"}"></i>
+        Opening balances ${fmtMoney(check.opening_balances)} + lifetime surplus ${fmtMoney(check.lifetime_surplus)}
+        = ${fmtMoney(check.expected_net_worth)} ${ok ? "— matches the balance sheet" : "— does NOT match " + fmtMoney(check.actual_net_worth)}
+      </div>
+      <div class="text-muted small mt-1">From the records: income ${fmtMoney(bs.from_activity.income)},
+        expenses ${fmtMoney(bs.from_activity.expenses)}, into savings ${fmtMoney(bs.from_activity.savings_in)},
+        out of savings ${fmtMoney(bs.from_activity.withdrawals)},
+        borrowed ${fmtMoney(bs.from_activity.loan_borrowed)}, repaid ${fmtMoney(bs.from_activity.loan_repaid)}.</div>
     </div></div></div></div>`;
   $("#balance-sheet").innerHTML = html;
 }
 
-// ---------- assets & liabilities ----------
-async function loadItems() {
-  const [assets, liabilities] = await Promise.all([api("/api/assets"), api("/api/liabilities")]);
+// ---------- accounts, loans, reconciliation ----------
+async function loadAccountsBook() {
+  const [accounts, loans, assets, liabilities] = await Promise.all([
+    api("/api/accounts"), api("/api/loans"), api("/api/assets"), api("/api/liabilities"),
+  ]);
+  state.accounts = accounts;
+  state.loans = loans;
   state.assets = assets;
   state.liabilities = liabilities;
   const editable = canEdit();
-  $("#add-asset-btn").style.display = editable ? "" : "none";
-  $("#add-liability-btn").style.display = editable ? "" : "none";
+  ["#add-account-btn", "#add-transfer-btn", "#add-loan-btn", "#add-asset-btn", "#add-liability-btn"]
+    .forEach(sel => { const el = $(sel); if (el) el.style.display = editable ? "" : "none"; });
+
+  $("#account-table tbody").innerHTML = accounts.map(a => `
+    <tr>
+      <td>${escapeHtml(a.name)}</td>
+      <td class="text-capitalize">${escapeHtml(a.kind)}</td>
+      <td class="text-end">${fmtMoney(a.opening_balance)}</td>
+      <td class="text-muted small">${a.opening_date || "—"}</td>
+      <td class="text-end">${fmtMoney(a.movements_in)}</td>
+      <td class="text-end">${fmtMoney(a.movements_out)}</td>
+      <td class="text-end fw-semibold">${fmtMoney(a.balance)}</td>
+      <td class="text-end text-nowrap">${editable ? `
+        <button class="btn btn-sm btn-outline-secondary" onclick="openAccount(${a.id})">Edit</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteAccount(${a.id})">Delete</button>` : ""}</td>
+    </tr>`).join("") || '<tr><td colspan="8" class="text-muted">No accounts yet.</td></tr>';
+
+  $("#loan-table tbody").innerHTML = loans.map(l => `
+    <tr>
+      <td>${escapeHtml(l.lender)}</td>
+      <td class="text-end">${fmtMoney(l.borrowed)}</td>
+      <td class="text-end">${fmtMoney(l.repaid)}</td>
+      <td class="text-end fw-semibold ${l.outstanding > 0 ? "text-danger" : ""}">${fmtMoney(l.outstanding)}</td>
+    </tr>`).join("") ||
+    '<tr><td colspan="4" class="text-muted">No loans recorded — use “Record borrow / repay”.</td></tr>';
 
   $("#asset-table tbody").innerHTML = assets.length ? assets.map(a => `
     <tr><td>${escapeHtml(a.name)}</td><td class="text-capitalize">${escapeHtml(a.kind)}</td>
@@ -853,6 +923,185 @@ async function loadItems() {
         <button class="btn btn-sm btn-outline-secondary" onclick="openLiability(${l.id})">Edit</button>
         <button class="btn btn-sm btn-outline-danger" onclick="deleteLiability(${l.id})">Delete</button>` : ""}</td>
     </tr>`).join("") : '<tr><td colspan="4" class="text-muted">No liabilities recorded yet.</td></tr>';
+
+  fillAccountSelects(accounts);
+}
+
+function fillAccountSelects(accounts) {
+  const savings = (accounts || []).filter(a => a.kind === "savings");
+  const opts = savings.map(a => `<option value="${a.id}">${escapeHtml(a.name)}</option>`).join("");
+  ["#tr-account"].forEach(sel => { const el = $(sel); if (el) el.innerHTML = opts; });
+}
+
+async function loadReconciliation() {
+  const rec = await api("/api/reconciliation");
+  $("#recon-identity").textContent = rec.identity;
+  const t = rec.totals;
+  $("#recon-kpis").innerHTML = [
+    { label: "Income", value: fmtMoney(t.income), cls: "income", icon: "bi-arrow-down-circle" },
+    { label: "Expenses", value: fmtMoney(t.expenses), cls: "expense", icon: "bi-arrow-up-circle" },
+    { label: "Surplus", value: fmtMoney(t.surplus), cls: "balance", icon: "bi-equals" },
+    { label: "Months needing attention", value: String(t.months_with_issues),
+      cls: t.months_with_issues ? "expense" : "income", icon: "bi-clipboard-check" },
+  ].map(kpiCard).join("");
+
+  $("#recon-issues").innerHTML = rec.issues.length
+    ? `<div class="alert alert-warning mb-0"><strong>${rec.issues.length} month(s) need a look:</strong>
+        <ul class="mb-0 mt-1">${rec.issues.slice(0, 12).map(i =>
+          `<li>${monthLabel(i.month)} — ${escapeHtml(i.issue)}</li>`).join("")}</ul>
+        ${rec.issues.length > 12 ? `<div class="small">…and ${rec.issues.length - 12} more</div>` : ""}</div>`
+    : '<div class="alert alert-success mb-0">Every month reconciles: each surplus was moved to savings and every deficit has a recorded source.</div>';
+
+  $("#recon-table tbody").innerHTML = [...rec.rows].reverse().map(r => `
+    <tr>
+      <td class="text-nowrap">${monthLabel(r.month)}</td>
+      <td class="text-end">${fmtMoney(r.income)}</td>
+      <td class="text-end">${fmtMoney(r.expenses)}</td>
+      <td class="text-end ${r.surplus < 0 ? "text-danger" : ""}">${fmtMoney(r.surplus)}</td>
+      <td class="text-end">${fmtMoney(r.savings_in)}</td>
+      <td class="text-end">${r.withdrawal ? `<span class="text-danger">${fmtMoney(r.withdrawal)}</span>` : "—"}</td>
+      <td class="text-end">${r.loan_borrow ? fmtMoney(r.loan_borrow) : "—"}</td>
+      <td class="text-end">${r.loan_repay ? fmtMoney(r.loan_repay) : "—"}</td>
+      <td class="text-end ${r.cash_balance < 0 ? "text-danger fw-semibold" : ""}">${fmtMoney(r.cash_balance)}</td>
+      <td>${r.issue
+        ? `<span class="badge bg-warning-subtle text-warning-emphasis" title="${escapeHtml(r.issue)}">check</span>`
+        : '<span class="badge bg-success-subtle text-success-emphasis">ok</span>'}</td>
+    </tr>`).join("");
+}
+
+// ---------- accounts, transfers, loans ----------
+async function ensureAccounts() {
+  if (state.accounts && state.accounts.length) return state.accounts;
+  try { state.accounts = await api("/api/accounts"); } catch (err) { state.accounts = []; }
+  return state.accounts;
+}
+
+function openAccount(id) {
+  const a = (state.accounts || []).find(x => x.id === id);
+  $("#accountModalTitle").textContent = a ? "Edit account" : "Add account";
+  $("#account-id").value = a ? a.id : "";
+  $("#account-name").value = a ? a.name : "";
+  $("#account-kind").value = a ? a.kind : "savings";
+  $("#account-opening").value = a ? a.opening_balance : "";
+  $("#account-opening-date").value = a && a.opening_date ? a.opening_date : "";
+  $("#account-note").value = a && a.note ? a.note : "";
+  $("#account-active").checked = a ? a.is_active : true;
+  new bootstrap.Modal("#accountModal").show();
+}
+
+async function saveAccount(e) {
+  e.preventDefault();
+  const id = $("#account-id").value;
+  const payload = {
+    name: $("#account-name").value,
+    kind: $("#account-kind").value,
+    opening_balance: Number($("#account-opening").value || 0),
+    opening_date: $("#account-opening-date").value || null,
+    note: $("#account-note").value || null,
+    is_active: $("#account-active").checked,
+  };
+  try {
+    if (id) await api("/api/accounts/" + id, { method: "PUT", body: JSON.stringify(payload) });
+    else await api("/api/accounts", { method: "POST", body: JSON.stringify(payload) });
+    state.accounts = null;
+    bootstrap.Modal.getInstance($("#accountModal")).hide();
+    showAlert("Account saved — the balance sheet and statements now use it.");
+    await loadAccountsBook();
+    loadBalanceSheet();
+    loadDashboard();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+async function deleteAccount(id) {
+  if (!confirm("Remove this account? Only possible when nothing uses it.")) return;
+  try {
+    await api("/api/accounts/" + id, { method: "DELETE" });
+    state.accounts = null;
+    showAlert("Account removed");
+    await loadAccountsBook();
+    loadBalanceSheet();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+async function openTransfer(defaultDirection) {
+  if (!canEdit()) return;
+  await ensureAccounts();
+  fillAccountSelects(state.accounts);
+  $("#tr-dir").value = defaultDirection || "in";
+  toggleTransferFunding();
+  $("#tr-date").value = isoDate();
+  $("#tr-amount").value = "";
+  $("#tr-note").value = "";
+  new bootstrap.Modal("#transferModal").show();
+}
+
+function toggleTransferFunding() {
+  $("#tr-funded-wrap").classList.toggle("d-none", $("#tr-dir").value !== "in");
+}
+
+async function saveTransfer(e) {
+  e.preventDefault();
+  const payload = {
+    date: $("#tr-date").value,
+    amount: Number($("#tr-amount").value),
+    direction: $("#tr-dir").value,
+    note: $("#tr-note").value || null,
+  };
+  if ($("#tr-account").value) payload.account_id = Number($("#tr-account").value);
+  if (payload.direction === "in") payload.funded_by = $("#tr-funded").value;
+  try {
+    await api("/api/transfers", { method: "POST", body: JSON.stringify(payload) });
+    bootstrap.Modal.getInstance($("#transferModal")).hide();
+    showAlert("Transfer saved — the month-end sweep has been recalculated.");
+    state.accounts = null;
+    if (state.currentPage === "savings") loadSavings();
+    if (state.currentPage === "statements") { loadAccountsBook(); loadBalanceSheet(); }
+    if (state.currentPage === "dashboard") loadDashboard();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+async function openLoan() {
+  if (!canEdit()) return;
+  $("#ln-dir").value = "borrow";
+  $("#ln-lender").value = (state.loans && state.loans[0]) ? state.loans[0].lender : "";
+  $("#ln-date").value = isoDate();
+  $("#ln-amount").value = "";
+  $("#ln-note").value = "";
+  new bootstrap.Modal("#loanModal").show();
+}
+
+async function saveLoan(e) {
+  e.preventDefault();
+  const payload = {
+    date: $("#ln-date").value,
+    amount: Number($("#ln-amount").value),
+    direction: $("#ln-dir").value,
+    lender: $("#ln-lender").value,
+    note: $("#ln-note").value || null,
+  };
+  try {
+    await api("/api/loans", { method: "POST", body: JSON.stringify(payload) });
+    bootstrap.Modal.getInstance($("#loanModal")).hide();
+    showAlert(payload.direction === "borrow" ? "Borrowing recorded — cash up, debt up."
+                                             : "Repayment recorded — cash down, debt down.");
+    await loadAccountsBook();
+    loadBalanceSheet();
+    loadDashboard();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+// ---------- assets & liabilities ----------
+// the accounts tab shows accounts, loans, assets and liabilities together
+async function loadItems() {
+  return loadAccountsBook();
 }
 
 function openAsset(id) {
@@ -972,6 +1221,16 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#add-saving-btn").addEventListener("click", () => openSaving());
   $("#saving-form").addEventListener("submit", saveSaving);
   $("#run-offsets-btn").addEventListener("click", runOffsets);
+  $("#add-transfer-btn").addEventListener("click", () => openTransfer("in"));
+  $("#add-transfer-btn-2").addEventListener("click", () => openTransfer("in"));
+  $("#transfer-form").addEventListener("submit", saveTransfer);
+  $("#tr-dir").addEventListener("change", toggleTransferFunding);
+
+  // accounts and loans
+  $("#add-account-btn").addEventListener("click", () => openAccount());
+  $("#account-form").addEventListener("submit", saveAccount);
+  $("#add-loan-btn").addEventListener("click", openLoan);
+  $("#loan-form").addEventListener("submit", saveLoan);
 
   // financial statements
   $$("#statement-tabs .nav-link").forEach(a => a.addEventListener("click", (e) => {

@@ -8,6 +8,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Query, UploadFile, 
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
 from . import models, schemas, crud, auth, backup_io, finance
@@ -37,7 +38,7 @@ def _database_check():
         return False, f"{type(exc).__name__}: {exc}"
 
 
-app = FastAPI(title="Family Financial Control System", version="1.3.0")
+app = FastAPI(title="Family Financial Control System", version="1.4.0")
 
 
 app.add_middleware(
@@ -63,8 +64,11 @@ def on_startup():
         from .seed import seed_initial_data
         seed_initial_data()
         with SessionLocal() as db:
-            sweep = finance.apply_month_end_offsets(db)
-        logger.info("Month-end saving offsets: %s created, %s updated, %s removed (%s closed months)",
+            started = finance.ensure_default_accounts(db)
+            if started:
+                logger.info("Created the default accounts: %s", ", ".join(started))
+            sweep = finance.apply_month_end_sweep(db)
+        logger.info("Month-end sweep: %s created, %s updated, %s removed (%s closed months)",
                     sweep["created"], sweep["updated"], sweep["removed"], len(sweep["closed_months"]))
     except Exception:
         logger.exception("STARTUP FAILED while preparing the database at %s", safe_url())
@@ -296,9 +300,9 @@ def dashboard(db: Session = Depends(get_db), current_user: models.User = Depends
 def _refresh_offsets(db: Session) -> dict:
     """Re-apply the automatic month-end sweep; never breaks the caller on failure."""
     try:
-        return finance.apply_month_end_offsets(db)
+        return finance.apply_month_end_sweep(db)
     except Exception:
-        logger.exception("Month-end saving offsets could not be refreshed")
+        logger.exception("The month-end sweep could not be refreshed")
         db.rollback()
         return {}
 
@@ -313,7 +317,7 @@ def savings_summary(months: int = 12, db: Session = Depends(get_db),
 @app.post("/api/savings/entries", response_model=schemas.TransactionOut)
 def add_saving(data: schemas.SavingsEntryCreate, db: Session = Depends(get_db),
                current_user: models.User = Depends(require_editor)):
-    """Record a saving contribution (stored as a Savings transaction)."""
+    """Record a saving contribution (stored as a Savings transfer into the account)."""
     if data.amount <= 0:
         raise HTTPException(status_code=400, detail="The saving amount must be greater than zero")
 
@@ -332,9 +336,11 @@ def add_saving(data: schemas.SavingsEntryCreate, db: Session = Depends(get_db),
         raise HTTPException(status_code=400, detail="Unknown family member")
 
     payload = schemas.TransactionCreate(
-        date=data.date, type="Savings", category_id=category_id, amount=float(data.amount),
+        date=data.date, type=models.TYPE_SAVINGS, category_id=category_id, amount=float(data.amount),
         description=data.note or "Saving contribution",
         member_id=data.member_id or current_user.id,
+        account_id=data.account_id,
+        funded_by=data.funded_by or "income",
     )
     trx = crud.create_transaction(db, payload, current_user.id)
     _refresh_offsets(db)
@@ -342,11 +348,325 @@ def add_saving(data: schemas.SavingsEntryCreate, db: Session = Depends(get_db),
     return trx
 
 
-@app.post("/api/admin/offsets/run", response_model=schemas.OffsetRunResult)
-def run_offsets(db: Session = Depends(get_db),
-                current_user: models.User = Depends(require_admin)):
-    """Apply / refresh the automatic month-end saving offsets (idempotent)."""
+@app.post("/api/admin/sweep/run", response_model=schemas.SweepResult)
+def run_sweep(db: Session = Depends(get_db),
+              current_user: models.User = Depends(require_admin)):
+    """Apply / refresh the automatic month-end sweep (idempotent)."""
     return _refresh_offsets(db)
+
+
+@app.post("/api/admin/offsets/run", response_model=schemas.SweepResult)
+def run_offsets_legacy(db: Session = Depends(get_db),
+                       current_user: models.User = Depends(require_admin)):
+    """Same as /api/admin/sweep/run — kept for older clients."""
+    return _refresh_offsets(db)
+
+
+# ---------------- Accounts ----------------
+@app.get("/api/accounts", response_model=List[schemas.AccountOut])
+def get_accounts(include_inactive: bool = False, db: Session = Depends(get_db),
+                 current_user: models.User = Depends(get_current_user)):
+    return finance.list_accounts(db, include_inactive)
+
+
+@app.post("/api/accounts", response_model=schemas.AccountOut, status_code=status.HTTP_201_CREATED)
+def create_account(data: schemas.AccountCreate, db: Session = Depends(get_db),
+                   current_user: models.User = Depends(require_editor)):
+    if data.kind not in models.ACCOUNT_KINDS:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of: {', '.join(models.ACCOUNT_KINDS)}")
+    if db.query(models.Account).filter(func.lower(models.Account.name) == data.name.strip().lower()).first():
+        raise HTTPException(status_code=400, detail="An account with that name already exists")
+    account = models.Account(**data.model_dump(), created_by=current_user.id)
+    db.add(account)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@app.put("/api/accounts/{account_id}", response_model=schemas.AccountOut)
+def update_account(account_id: int, data: schemas.AccountUpdate, db: Session = Depends(get_db),
+                   current_user: models.User = Depends(require_editor)):
+    """Opening balances are edited here — they are stocks, never income."""
+    account = db.query(models.Account).filter(models.Account.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    values = data.model_dump(exclude_unset=True)
+    if values.get("kind") and values["kind"] not in models.ACCOUNT_KINDS:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of: {', '.join(models.ACCOUNT_KINDS)}")
+    for field, value in values.items():
+        setattr(account, field, value)
+    db.commit()
+    db.refresh(account)
+    return account
+
+
+@app.delete("/api/accounts/{account_id}")
+def delete_account(account_id: int, db: Session = Depends(get_db),
+                   current_user: models.User = Depends(require_editor)):
+    account = db.query(models.Account).filter(models.Account.id == account_id).first()
+    if not account:
+        raise HTTPException(status_code=404, detail="Account not found")
+    used = (db.query(func.count(models.Transaction.id))
+            .filter(models.Transaction.account_id == account_id).scalar() or 0)
+    if used:
+        raise HTTPException(status_code=400,
+                            detail=f"{used} transaction(s) use this account — deactivate it instead")
+    db.delete(account)
+    db.commit()
+    return {"ok": True}
+
+
+# ---------------- Transfers and loans ----------------
+@app.post("/api/transfers", response_model=schemas.TransactionOut)
+def add_transfer(data: schemas.TransferEntryCreate, db: Session = Depends(get_db),
+                 current_user: models.User = Depends(require_editor)):
+    """Move money between the family's own accounts (cash <-> savings)."""
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="The amount must be greater than zero")
+    if data.direction not in ("in", "out"):
+        raise HTTPException(status_code=400, detail="direction must be 'in' or 'out'")
+    cat = (db.query(models.Category)
+           .filter(models.Category.name == finance.SAVING_CATEGORY_NAME).first()
+           or db.query(models.Category).filter(models.Category.type == "Savings").first())
+    if cat is None:
+        raise HTTPException(status_code=400, detail="No Savings category exists yet")
+    if data.funded_by and data.funded_by not in models.FUNDED_BY:
+        raise HTTPException(status_code=400,
+                            detail=f"funded_by must be one of: {', '.join(models.FUNDED_BY)}")
+    payload = schemas.TransactionCreate(
+        date=data.date,
+        type=models.TYPE_SAVINGS if data.direction == "in" else models.TYPE_WITHDRAWAL,
+        category_id=cat.id, amount=float(data.amount),
+        description=data.note or ("Transfer into savings" if data.direction == "in"
+                                  else "Withdrawal from savings"),
+        member_id=data.member_id,
+        account_id=data.account_id,
+        funded_by=data.funded_by if data.direction == "in" else None,
+    )
+    trx = crud.create_transaction(db, payload, current_user.id)
+    _refresh_offsets(db)
+    db.refresh(trx)
+    return trx
+
+
+@app.post("/api/loans", response_model=schemas.TransactionOut)
+def add_loan(data: schemas.LoanEntryCreate, db: Session = Depends(get_db),
+             current_user: models.User = Depends(require_editor)):
+    """Record borrowing (cash up, debt up) or a repayment (cash down, debt down)."""
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="The amount must be greater than zero")
+    if data.direction not in ("borrow", "repay"):
+        raise HTTPException(status_code=400, detail="direction must be 'borrow' or 'repay'")
+    if not (data.lender or "").strip():
+        raise HTTPException(status_code=400, detail="A lender name is required")
+    cat = db.query(models.Category).filter(models.Category.name == "Loan").first()
+    if cat is None:
+        cat = models.Category(name="Loan", type="Loan", group="借款",
+                              description="Borrowing and repayment — never income or expense")
+        db.add(cat)
+        db.commit()
+        db.refresh(cat)
+    payload = schemas.TransactionCreate(
+        date=data.date, type=models.TYPE_LOAN, category_id=cat.id, amount=float(data.amount),
+        description=data.note or (f"Borrowed from {data.lender}" if data.direction == "borrow"
+                                  else f"Repaid to {data.lender}"),
+        account_id=data.account_id,
+        direction=data.direction, lender=data.lender.strip(),
+    )
+    trx = crud.create_transaction(db, payload, current_user.id)
+    db.refresh(trx)
+    return trx
+
+
+@app.get("/api/loans", response_model=List[schemas.LoanBalanceOut])
+def get_loans(db: Session = Depends(get_db),
+              current_user: models.User = Depends(get_current_user)):
+    """Outstanding balance per lender: borrowed minus repaid."""
+    return finance.loan_balances(db)["loans"]
+
+
+# ---------------- Reconciliation ----------------
+@app.get("/api/reconciliation")
+def get_reconciliation(start: Optional[date] = None, end: Optional[date] = None,
+                       db: Session = Depends(get_db),
+                       current_user: models.User = Depends(get_current_user)):
+    """Month by month: does the money add up, and was every deficit funded?"""
+    return finance.reconciliation(db, start, end)
+
+
+# ---------------- One-off move to the accounts model ----------------
+@app.post("/api/admin/migrate-accounts-model", response_model=schemas.ModelMigrationResult)
+def migrate_accounts_model(
+    apply: bool = False,
+    opening_savings: float = 0.0,
+    opening_savings_date: Optional[date] = None,
+    loan_amount: float = 0.0,
+    loan_lender: str = "Company",
+    loan_date: Optional[date] = None,
+    loan_funded_savings_amount: float = 0.0,
+    loan_funded_savings_date: Optional[date] = None,
+    remove_static_assets: List[str] = Query(default=[]),
+    remove_static_liabilities: List[str] = Query(default=[]),
+    db: Session = Depends(get_db),
+    current_user: models.User = Depends(require_master),
+):
+    """Move existing data onto the accounts model (master admin only).
+
+    Dry run by default — call with ``apply=true`` to write. Idempotent: a second
+    run reports ``already_applied`` and changes nothing. It
+
+      1. creates the cash/savings accounts and sets the savings opening balance,
+      2. reclassifies negative automatic saving rows as Withdrawals,
+      3. marks the loan-funded transfer as funded by the loan,
+      4. records the borrowing as a Loan row (cash up, debt up),
+      5. removes the static asset/liability pairs it replaces,
+      6. re-runs the month-end sweep so the figures are recomputed.
+    """
+    report = schemas.ModelMigrationResult(ok=True, already_applied=False)
+    before = finance.balance_sheet(db)
+    report.before = {
+        "savings": before["savings_total"], "cash": before["cash_total"],
+        "loans": before["loans_total"], "net_worth": before["net_worth"],
+        "liabilities": before["liabilities_total"], "assets": before["asset_items_total"],
+    }
+
+    accounts = finance.list_accounts(db)
+    savings_account = next((a for a in accounts if a.kind == "savings"), None)
+    cash_account = next((a for a in accounts if a.kind == "cash"), None)
+    if savings_account is None or cash_account is None:
+        if apply:
+            created = finance.ensure_default_accounts(db)
+            report.accounts_created = created
+            accounts = finance.list_accounts(db)
+            savings_account = next((a for a in accounts if a.kind == "savings"), None)
+            cash_account = next((a for a in accounts if a.kind == "cash"), None)
+        else:
+            report.accounts_created = ["Cash", "Savings"]
+
+    if opening_savings and savings_account is not None:
+        if abs(float(savings_account.opening_balance or 0.0)) < 0.005:
+            report.opening_balances_set.append(
+                f"{savings_account.name}: {opening_savings:,.0f}"
+                + (f" as of {opening_savings_date}" if opening_savings_date else ""))
+            if apply:
+                savings_account.opening_balance = float(opening_savings)
+                savings_account.opening_date = opening_savings_date
+                savings_account.note = (savings_account.note or "") or \
+                    "Balance accumulated over the years before the records start"
+                db.commit()
+        else:
+            report.notes.append(
+                f"{savings_account.name} already has an opening balance of "
+                f"{float(savings_account.opening_balance):,.0f} — left unchanged")
+
+    # 2. negative automatic rows become withdrawals
+    negatives = (db.query(models.Transaction)
+                 .filter(models.Transaction.auto_offset_month.isnot(None),
+                         models.Transaction.type == models.TYPE_SAVINGS,
+                         models.Transaction.amount < 0).all())
+    report.withdrawals_reclassified = len(negatives)
+    if apply:
+        for row in negatives:
+            row.type = models.TYPE_WITHDRAWAL
+            row.amount = abs(float(row.amount))
+            row.description = (f"Month-end withdrawal from savings for "
+                               f"{row.auto_offset_month} (the month ran a deficit)")
+        db.commit()
+
+    # 3. the transfer that was funded by the loan
+    if loan_funded_savings_amount:
+        candidates = (db.query(models.Transaction)
+                      .filter(models.Transaction.type == models.TYPE_SAVINGS,
+                              models.Transaction.auto_offset_month.is_(None)).all())
+        match = None
+        for row in candidates:
+            same_amount = abs(float(row.amount) - loan_funded_savings_amount) < 0.01
+            same_date = (not loan_funded_savings_date) or row.date == loan_funded_savings_date
+            if same_amount and same_date and row.funded_by != "loan":
+                match = row
+                break
+        if match is not None:
+            report.savings_reclassified = 1
+            report.notes.append(
+                f"{match.amount:,.0f} on {match.date} marked as funded by the loan")
+            if apply:
+                match.funded_by = "loan"
+                if not match.description:
+                    match.description = "Transferred from the loan proceeds into savings"
+                db.commit()
+        else:
+            already = any(abs(float(r.amount) - loan_funded_savings_amount) < 0.01
+                          and r.funded_by == "loan" for r in candidates)
+            report.notes.append("loan-funded transfer already marked" if already
+                                else "no matching transfer found to mark as loan-funded")
+
+    # 4. record the borrowing itself
+    if loan_amount:
+        existing_loan = (db.query(models.Transaction)
+                         .filter(models.Transaction.type == models.TYPE_LOAN).first())
+        if existing_loan is None:
+            report.loan_rows_created = 1
+            report.notes.append(f"loan of {loan_amount:,.0f} from {loan_lender} will be recorded "
+                                f"on {loan_date or 'its original date'}")
+            if apply:
+                category = db.query(models.Category).filter(models.Category.name == "Loan").first()
+                if category is None:
+                    category = models.Category(name="Loan", type="Loan", group="借款",
+                                               description="Borrowing and repayment — never income")
+                    db.add(category)
+                    db.commit()
+                    db.refresh(category)
+                db.add(models.Transaction(
+                    date=loan_date or date.today(), type=models.TYPE_LOAN, category_id=category.id,
+                    amount=float(loan_amount), direction="borrow", lender=loan_lender,
+                    account_id=cash_account.id if cash_account else None,
+                    description=f"Borrowed from {loan_lender}"),
+                )
+                db.commit()
+        else:
+            report.notes.append("a loan is already recorded in the ledger")
+
+    # 5. the static items the ledger replaces
+    for name in remove_static_assets:
+        item = db.query(models.AssetItem).filter(models.AssetItem.name == name).first()
+        if item is not None:
+            report.static_items_removed.append(f"asset: {name}")
+            if apply:
+                db.delete(item)
+    for name in remove_static_liabilities:
+        item = db.query(models.LiabilityItem).filter(models.LiabilityItem.name == name).first()
+        if item is not None:
+            report.static_items_removed.append(f"liability: {name}")
+            if apply:
+                db.delete(item)
+    if apply and report.static_items_removed:
+        db.commit()
+
+    # 6. recompute the sweep
+    sweep = _refresh_offsets(db)
+    report.sweep_rows_fixed = int((sweep or {}).get("updated", 0))
+    if apply and not any([report.accounts_created, report.opening_balances_set,
+                          report.withdrawals_reclassified, report.savings_reclassified,
+                          report.loan_rows_created, report.static_items_removed,
+                          report.sweep_rows_fixed]):
+        report.already_applied = True
+
+    after = finance.balance_sheet(db)
+    report.after = {
+        "savings": after["savings_total"], "cash": after["cash_total"],
+        "loans": after["loans_total"], "net_worth": after["net_worth"],
+        "liabilities": after["liabilities_total"], "assets": after["asset_items_total"],
+        "accounts": [{"name": a["name"], "kind": a["kind"], "opening": a["opening_balance"],
+                      "movements_in": a["movements_in"], "movements_out": a["movements_out"],
+                      "balance": a["balance"]} for a in after["accounts"]],
+        "reconciliation_difference": after["reconciliation"]["difference"],
+    }
+    report.notes.append(f"sweep: {sweep.get('created', 0)} created, {sweep.get('updated', 0)} updated")
+    if not apply:
+        report.notes.append("DRY RUN — nothing was written; call again with apply=true")
+    return report
 
 
 # ---------------- Financial statements ----------------

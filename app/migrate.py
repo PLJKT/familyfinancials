@@ -14,11 +14,16 @@ logger = logging.getLogger("familyfinancials.migrate")
 ADDED_COLUMNS = [
     ("transactions", "member_id", "INTEGER"),
     ("transactions", "auto_offset_month", "VARCHAR(7)"),
+    ("transactions", "account_id", "INTEGER"),
+    ("transactions", "direction", "VARCHAR(10)"),
+    ("transactions", "lender", "VARCHAR(120)"),
+    ("transactions", "funded_by", "VARCHAR(20)"),
 ]
 
 INDEXES = [
     ("ix_transactions_member_id", "transactions", "member_id"),
     ("ix_transactions_auto_offset_month", "transactions", "auto_offset_month"),
+    ("ix_transactions_account_id", "transactions", "account_id"),
 ]
 
 

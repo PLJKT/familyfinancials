@@ -81,16 +81,17 @@
           <h4 class="mb-0">Savings</h4>
           <div>
             <button class="btn btn-primary btn-sm" id="add-saving-btn"><i class="bi bi-piggy-bank"></i> Add saving</button>
+            <button class="btn btn-outline-primary btn-sm" id="add-transfer-btn-2"><i class="bi bi-arrow-left-right"></i> Transfer / withdraw</button>
             <button class="btn btn-outline-secondary btn-sm" id="run-offsets-btn"><i class="bi bi-arrow-repeat"></i> Refresh month-end sweep</button>
           </div>
         </div>
 
         <div class="alert alert-light border small">
           <strong>How the month-end sweep works.</strong> Once a month has ended, the system posts one automatic
-          Savings entry equal to <em>income − expenses − savings already recorded that month</em>, so a finished
-          month's savings always equal its surplus. The sweep is idempotent: it updates the same entry instead of
-          adding another one, and it runs by itself whenever data changes. The month you are currently in is left
-          alone until it ends.
+          movement so the month's surplus lands in savings: a <em>transfer in</em> when the month ran a surplus,
+          or a <em>withdrawal</em> when it ran a deficit (the gap was funded from savings). Transfers you record
+          yourself count towards it, transfers funded by a loan are left out, and the sweep is idempotent — it
+          updates the same row instead of adding another. The month you are currently in is left alone until it ends.
         </div>
 
         <div class="row g-3 mb-3" id="savings-kpis"></div>
@@ -104,9 +105,11 @@
                 <th class="text-end">Income</th>
                 <th class="text-end">Expenses</th>
                 <th class="text-end">Surplus</th>
-                <th class="text-end">Recorded savings</th>
-                <th class="text-end">Month-end sweep</th>
-                <th class="text-end">Total savings</th>
+                <th class="text-end">Transferred in</th>
+                <th class="text-end">Withdrawn</th>
+                <th class="text-end">Sweep</th>
+                <th class="text-end">Net</th>
+                <th class="text-end">Balance</th>
                 <th></th>
               </tr></thead>
               <tbody></tbody>
@@ -135,7 +138,8 @@
         <ul class="nav nav-pills mb-3" id="statement-tabs">
           <li class="nav-item"><a class="nav-link active" data-stmt="income" href="#">Income statement</a></li>
           <li class="nav-item"><a class="nav-link" data-stmt="balance" href="#">Balance sheet</a></li>
-          <li class="nav-item"><a class="nav-link" data-stmt="items" href="#">Assets &amp; liabilities</a></li>
+          <li class="nav-item"><a class="nav-link" data-stmt="accounts" href="#">Accounts, loans &amp; items</a></li>
+          <li class="nav-item"><a class="nav-link" data-stmt="recon" href="#">Reconciliation</a></li>
         </ul>
 
         <!-- Income statement -->
@@ -190,32 +194,89 @@
           <div id="balance-sheet"></div>
         </div>
 
-        <!-- Assets & liabilities -->
-        <div id="stmt-items" class="d-none">
+        <!-- Accounts, loans & items -->
+        <div id="stmt-accounts" class="d-none">
+          <div class="card mb-3"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div>
+                <h6 class="mb-0">Money accounts</h6>
+                <div class="text-muted small">Each account starts from an opening balance — a stock the
+                  family already held. It is never counted as income, expense or saving.</div>
+              </div>
+              <div>
+                <button class="btn btn-outline-secondary btn-sm" id="add-transfer-btn">Transfer / withdraw</button>
+                <button class="btn btn-primary btn-sm" id="add-account-btn">Add account</button>
+              </div>
+            </div>
+            <div class="table-responsive"><table class="table table-sm mb-0" id="account-table">
+              <thead><tr><th>Account</th><th>Kind</th><th class="text-end">Opening</th><th>As of</th>
+                <th class="text-end">In</th><th class="text-end">Out</th><th class="text-end">Balance</th><th></th></tr></thead>
+              <tbody></tbody>
+            </table></div>
+          </div></div>
+
+          <div class="card mb-3"><div class="card-body">
+            <div class="d-flex justify-content-between align-items-center mb-1">
+              <div>
+                <h6 class="mb-0">Loans</h6>
+                <div class="text-muted small">Outstanding = everything borrowed minus everything repaid.
+                  Borrowing is never income.</div>
+              </div>
+              <button class="btn btn-primary btn-sm" id="add-loan-btn">Record borrow / repay</button>
+            </div>
+            <div class="table-responsive"><table class="table table-sm mb-0" id="loan-table">
+              <thead><tr><th>Lender</th><th class="text-end">Borrowed</th><th class="text-end">Repaid</th>
+                <th class="text-end">Outstanding</th></tr></thead>
+              <tbody></tbody>
+            </table></div>
+          </div></div>
+
           <div class="row g-3">
             <div class="col-lg-6"><div class="card h-100"><div class="card-body">
               <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0">Assets</h6>
+                <h6 class="mb-0">Other assets</h6>
                 <button class="btn btn-primary btn-sm" id="add-asset-btn"><i class="bi bi-plus-lg"></i> Add asset</button>
               </div>
               <div class="table-responsive"><table class="table table-sm mb-0" id="asset-table">
                 <thead><tr><th>Name</th><th>Kind</th><th class="text-end">Value</th><th></th></tr></thead>
                 <tbody></tbody>
               </table></div>
-              <div class="text-muted small mt-2">Property, vehicle, investment, cash, other — everything the family owns outside of the transaction records.</div>
+              <div class="text-muted small mt-2">Property, vehicle, investment, cash, other — everything the family owns outside of the accounts above.</div>
             </div></div></div>
             <div class="col-lg-6"><div class="card h-100"><div class="card-body">
               <div class="d-flex justify-content-between align-items-center mb-2">
-                <h6 class="mb-0">Liabilities</h6>
+                <h6 class="mb-0">Other liabilities</h6>
                 <button class="btn btn-primary btn-sm" id="add-liability-btn"><i class="bi bi-plus-lg"></i> Add liability</button>
               </div>
               <div class="table-responsive"><table class="table table-sm mb-0" id="liability-table">
                 <thead><tr><th>Name</th><th>Kind</th><th class="text-end">Outstanding</th><th></th></tr></thead>
                 <tbody></tbody>
               </table></div>
-              <div class="text-muted small mt-2">Mortgage, car loan, personal loan, credit card — the amounts still owed.</div>
+              <div class="text-muted small mt-2">Debts you track by hand — a mortgage you do not itemise, cards, informal loans. Loans recorded in the ledger are listed above.</div>
             </div></div></div>
           </div>
+        </div>
+
+        <!-- Reconciliation -->
+        <div id="stmt-recon" class="d-none">
+          <div class="card mb-3"><div class="card-body">
+            <h6 class="mb-1">Does the money add up?</h6>
+            <div class="text-muted small" id="recon-identity"></div>
+            <div class="row g-3 mt-2" id="recon-kpis"></div>
+            <div id="recon-issues" class="mt-3"></div>
+          </div></div>
+          <div class="card"><div class="card-body">
+            <h6 class="mb-3">Month by month</h6>
+            <div class="table-responsive"><table class="table table-sm table-striped mb-0" id="recon-table">
+              <thead><tr>
+                <th>Month</th><th class="text-end">Income</th><th class="text-end">Expenses</th>
+                <th class="text-end">Surplus</th><th class="text-end">Into savings</th>
+                <th class="text-end">Out of savings</th><th class="text-end">Borrowed</th>
+                <th class="text-end">Repaid</th><th class="text-end">Cash</th><th>Status</th>
+              </tr></thead>
+              <tbody></tbody>
+            </table></div>
+          </div></div>
         </div>
       </section>
 
@@ -460,6 +521,73 @@
         <label class="form-check-label" for="liability-active">Still owed (include in the balance sheet)</label></div>
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save liability</button></div>
+  </form>
+</div></div></div>
+
+<!-- Account modal -->
+<div class="modal fade" id="accountModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="account-form">
+    <div class="modal-header"><h5 class="modal-title" id="accountModalTitle">Add account</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="account-id" />
+      <div class="mb-3"><label class="form-label">Name</label><input type="text" class="form-control" id="account-name" placeholder="e.g. Family savings, BCA current account" required /></div>
+      <div class="mb-3"><label class="form-label">Kind</label><select class="form-select" id="account-kind">
+        <option value="savings">savings — money put aside</option>
+        <option value="cash">cash — the account you spend from</option>
+      </select></div>
+      <div class="mb-3"><label class="form-label">Opening balance</label><input type="number" step="0.01" class="form-control" id="account-opening" />
+        <div class="form-text">What this account already held when your records start. A stock: it never counts as income, expense or saving.</div></div>
+      <div class="mb-3"><label class="form-label">Opening date</label><input type="date" class="form-control" id="account-opening-date" /></div>
+      <div class="mb-3"><label class="form-label">Note</label><input type="text" class="form-control" id="account-note" /></div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="account-active" checked />
+        <label class="form-check-label" for="account-active">Active (included in the balances)</label></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save account</button></div>
+  </form>
+</div></div></div>
+
+<!-- Transfer modal -->
+<div class="modal fade" id="transferModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="transfer-form">
+    <div class="modal-header"><h5 class="modal-title">Transfer / withdraw</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="mb-3"><label class="form-label">Direction</label><select class="form-select" id="tr-dir">
+        <option value="in">Into savings (cash → savings)</option>
+        <option value="out">Out of savings (savings → cash)</option>
+      </select>
+        <div class="form-text">Moving money between your own accounts. It never counts as income or expense.</div></div>
+      <div class="mb-3"><label class="form-label">Date</label><input type="date" class="form-control" id="tr-date" required /></div>
+      <div class="mb-3"><label class="form-label">Amount</label><input type="number" step="0.01" min="0.01" class="form-control" id="tr-amount" required /></div>
+      <div class="mb-3" id="tr-funded-wrap"><label class="form-label">Funded by</label><select class="form-select" id="tr-funded">
+        <option value="income">income — money the family earned</option>
+        <option value="loan">loan — borrowed money</option>
+        <option value="opening">earlier savings</option>
+        <option value="other">other</option>
+      </select>
+        <div class="form-text">Transfers funded by a loan are left out of the month-end sweep.</div></div>
+      <div class="mb-3"><label class="form-label">Savings account</label><select class="form-select" id="tr-account"></select></div>
+      <div class="mb-3"><label class="form-label">Note</label><input type="text" class="form-control" id="tr-note" /></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save transfer</button></div>
+  </form>
+</div></div></div>
+
+<!-- Loan modal -->
+<div class="modal fade" id="loanModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="loan-form">
+    <div class="modal-header"><h5 class="modal-title">Record a loan movement</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="mb-3"><label class="form-label">Direction</label><select class="form-select" id="ln-dir">
+        <option value="borrow">Borrow — cash up, debt up</option>
+        <option value="repay">Repay — cash down, debt down</option>
+      </select>
+        <div class="form-text">Borrowing is never income; repayments are never an expense. Interest is a separate expense entry.</div></div>
+      <div class="mb-3"><label class="form-label">Lender</label><input type="text" class="form-control" id="ln-lender" placeholder="e.g. Prosindo" required /></div>
+      <div class="mb-3"><label class="form-label">Date</label><input type="date" class="form-control" id="ln-date" required /></div>
+      <div class="mb-3"><label class="form-label">Amount</label><input type="number" step="0.01" min="0.01" class="form-control" id="ln-amount" required /></div>
+      <div class="mb-3"><label class="form-label">Note</label><input type="text" class="form-control" id="ln-note" /></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
   </form>
 </div></div></div>
 

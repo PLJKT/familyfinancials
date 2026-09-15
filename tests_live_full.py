@@ -251,9 +251,14 @@ if wb is not None and os.path.exists(LOCAL_BACKUP):
         def rows_of(w):
             ws = w["Transactions"]
             hdr = [c.value for c in ws[1]]
+            auto = hdr.index("AutoOffset") if "AutoOffset" in hdr else None
+            # compare only the columns the older file has, so added columns do not count as changes
+            cols = [hdr.index(c) for c in ("Date", "Type", "Category", "Amount", "Description") if c in hdr]
             out = []
             for r in ws.iter_rows(min_row=2, values_only=True):
-                out.append(tuple(str(v) for v in r))
+                if auto is not None and r[auto]:
+                    continue          # automatic sweep rows did not exist in the older file
+                out.append(tuple(str(r[i]) for i in cols))
             return hdr, sorted(out)
         h1, r1 = rows_of(wb)
         h2, r2 = rows_of(old)
@@ -271,7 +276,8 @@ check("storage reported as persistent", st.get("persistent_storage") is True)
 check("database reachable per the status endpoint", st.get("database_ok") is True)
 check("status names the postgres target", "postgres" in str(st.get("database_target", "")),
       str(st.get("database_target"))[:70])
-check("status reports the app version", st.get("app_version") == "1.2.0", str(st.get("app_version")))
+check("status reports the app version", st.get("app_version") == hz.get("version"),
+      f"{st.get('app_version')} (healthz says {hz.get('version')})")
 check("download history is recorded", len(st.get("history") or []) > 0,
       f"{len(st.get('history') or [])} entries")
 check("reminder cleared after today's download", st.get("due") is False,

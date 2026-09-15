@@ -13,6 +13,8 @@ Thumbs.db
 # local backups / test artefacts
 backups/
 live_check_out.txt
+live_full_out.txt
+live_savings_out.txt
 live_check_results.json
 .persist_marker.txt
 .last_backup.txt

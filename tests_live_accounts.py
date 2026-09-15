@@ -70,6 +70,14 @@ def call(method, path, body=None, token=None, raw=False, tries=4, timeout=180):
     return None, f"network error: {last!r}"
 
 
+def version_at_least(actual, want):
+    """True when the running build is `want` or newer."""
+    try:
+        return tuple(int(x) for x in str(actual).split(".")) >= tuple(int(x) for x in str(want).split("."))
+    except (TypeError, ValueError):
+        return False
+
+
 def close(a, b, tol=2.0):
     return abs(float(a) - float(b)) <= tol
 
@@ -81,7 +89,7 @@ def money(x):
 print(f"waiting for version {TARGET_VERSION} to go live...")
 for attempt in range(20):
     s, hz = call("GET", "/healthz")
-    if isinstance(hz, dict) and hz.get("version") == TARGET_VERSION:
+    if isinstance(hz, dict) and version_at_least(hz.get("version"), TARGET_VERSION):
         print(f"  build {hz['version']} is live (checked {attempt + 1}x)\n")
         break
     print(f"  attempt {attempt + 1}: {hz.get('version') if isinstance(hz, dict) else hz}")
@@ -230,7 +238,7 @@ check("the reclassified withdrawals are exported", withdrawals >= 20, str(withdr
 
 s, st = call("GET", "/api/admin/backup-status", token=TOK)
 check("the reminder bookkeeping still works", s == 200 and st["interval_days"] == 7, f"due={st['due']}")
-check("the version is reported", st.get("app_version") == TARGET_VERSION, str(st.get("app_version")))
+check("the version is reported", version_at_least(st.get("app_version"), TARGET_VERSION), str(st.get("app_version")))
 
 print(f"\n===== LIVE ACCOUNTS CHECK: {passed} passed, {failed} failed =====")
 raise SystemExit(1 if failed else 0)

@@ -15,7 +15,7 @@ import urllib.request
 
 B = os.getenv("FF_BASE", "https://familyfinancials.onrender.com")
 PASSWORD = os.environ["FF_ADMIN_PASSWORD"]
-TARGET_VERSION = os.getenv("FF_VERSION", "1.3.0")
+TARGET_VERSION = os.getenv("FF_VERSION", "1.4.0")
 
 passed = failed = 0
 
@@ -65,15 +65,23 @@ def call(method, path, body=None, token=None, raw=False, tries=4, timeout=120):
     return None, f"network error: {last!r}"
 
 
+def version_at_least(actual, want):
+    """True when the running build is `want` or newer."""
+    try:
+        return tuple(int(x) for x in str(actual).split(".")) >= tuple(int(x) for x in str(want).split("."))
+    except (TypeError, ValueError):
+        return False
+
+
 def close(a, b, tol=2.0):
     return abs(float(a) - float(b)) <= tol
 
 
-print(f"waiting for version {TARGET_VERSION} to go live...")
+print(f"waiting for version {TARGET_VERSION} (or newer) to go live...")
 for attempt in range(20):
     s, hz = call("GET", "/healthz")
     ver = hz.get("version") if isinstance(hz, dict) else None
-    if ver == TARGET_VERSION:
+    if version_at_least(ver, TARGET_VERSION):
         print(f"  build {ver} is live (checked {attempt + 1}x)\n")
         break
     print(f"  attempt {attempt + 1}: still {ver}")
@@ -210,7 +218,7 @@ check("Excel export has 7 columns and all rows",
       f"cols={[c.value for c in ws[1]]}, rows={ws.max_row - 1}")
 s, st = call("GET", "/api/admin/backup-status", token=TOK)
 check("weekly reminder bookkeeping intact", s == 200 and st["interval_days"] == 7, f"due={st['due']}")
-check("status reports the new app version", st.get("app_version") == TARGET_VERSION, str(st.get("app_version")))
+check("status reports the new app version", version_at_least(st.get("app_version"), TARGET_VERSION), str(st.get("app_version")))
 
 print(f"\n===== LIVE SAVINGS CHECK: {passed} passed, {failed} failed =====")
 raise SystemExit(1 if failed else 0)

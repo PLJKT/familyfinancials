@@ -780,16 +780,16 @@ async function loadIncomeStatement() {
   html += statementRow("Surplus (income − expenses)", rep.surplus, { cls: "fw-bold" });
   const fin = rep.financing || {};
   html += '<tr class="table-light fw-semibold"><td>BELOW THE LINE — movements, not income</td><td></td></tr>';
-  html += statementRow("Transferred into savings", fin.savings_in || 0, { indent: true });
+  html += statementRow("Transferred into savings (from income)", fin.savings_in || 0, { indent: true });
   if (fin.savings_in_funded_by_loan) {
-    html += statementRow("of which funded by a loan", fin.savings_in_funded_by_loan,
+    html += statementRow("Transferred into savings from the loan", fin.savings_in_funded_by_loan,
       { indent: true, cls: "text-muted" });
   }
   html += statementRow("Withdrawn from savings", fin.withdrawals || 0, { indent: true });
-  html += statementRow("Net movement in savings", fin.savings_net || 0, { cls: "fw-semibold" });
+  html += statementRow("Net movement in savings (from income)", fin.savings_net || 0, { cls: "fw-semibold" });
   html += statementRow("Borrowed", fin.loan_borrowed || 0, { indent: true });
   html += statementRow("Repaid", fin.loan_repaid || 0, { indent: true });
-  html += statementRow("Net worth change", rep.surplus, { cls: "fw-bold border-top" });
+  html += statementRow("Net worth change (only income and expenses move it)", rep.surplus, { cls: "fw-bold border-top" });
   html += "</tbody></table>";
   $("#income-statement").innerHTML = html;
 

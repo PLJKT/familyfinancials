@@ -151,6 +151,14 @@ class AccountOut(AccountBase):
         from_attributes = True
 
 
+class AccountBalanceOut(AccountOut):
+    """An account plus the movements that produced its balance."""
+
+    movements_in: float = 0.0
+    movements_out: float = 0.0
+    balance: float = 0.0
+
+
 # ---------- Transfers between the family's own accounts ----------
 class TransferEntryCreate(BaseModel):
     """Move money between accounts: into savings, or back out of it."""

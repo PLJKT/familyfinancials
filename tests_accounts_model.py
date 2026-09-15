@@ -86,6 +86,11 @@ check("a cash and a savings account are created automatically",
       any(a["kind"] == "cash" for a in accounts) and any(a["kind"] == "savings" for a in accounts),
       str([(a["name"], a["kind"]) for a in accounts]))
 check("accounts start with no opening balance", all(a["opening_balance"] == 0 for a in accounts))
+check("the accounts list carries the balance and the movements that produced it",
+      all("balance" in a and "movements_in" in a and "movements_out" in a
+          and close(a["opening_balance"] + a["movements_in"] - a["movements_out"], a["balance"], 1)
+          for a in accounts),
+      str([(a["name"], money(a.get("balance")), money(a.get("movements_in"))) for a in accounts]))
 
 print("\n== 2. the old negative rows come across as withdrawals ==")
 s, bs0 = call("GET", "/api/statements/balance-sheet", token=TOK)

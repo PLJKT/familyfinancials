@@ -109,19 +109,20 @@ s, summ = call("GET", "/api/savings/summary?months=60", token=TOK)
 check("savings summary loads", s == 200 and "months" in summ, f"HTTP {s}")
 closed = [m for m in summ["months"] if m["closed"]]
 check("44 closed months reported", len(closed) == 44, str(len(closed)))
-check("every closed month: savings == surplus",
-      all(close(m["savings_total"], m["surplus"]) for m in closed),
-      str([m["month"] for m in closed if not close(m["savings_total"], m["surplus"])][:5]))
+check("every closed month: the movement into savings is its surplus (plus loan-funded transfers)",
+      all(close(m["savings_net"], m["surplus"] + m["savings_in_loan"]) for m in closed),
+      str([m["month"] for m in closed
+           if not close(m["savings_net"], m["surplus"] + m["savings_in_loan"])][:5]))
 check("every closed month carries a sweep row",
-      all(m["offset_applied"] for m in closed),
-      f"{sum(1 for m in closed if m['offset_applied'])}/{len(closed)}")
-check("the sweep total is the expected -286,334,640",
-      close(summ["totals"]["savings_offset"], -286_334_640, 5),
-      f"{summ['totals']['savings_offset']:,.0f}")
-check("2026-08 keeps the real 230M deposit and offsets it",
-      close([m for m in summ["months"] if m["month"] == "2026-08"][0]["savings_manual"], 230_018_462, 5)
-      and close([m for m in summ["months"] if m["month"] == "2026-08"][0]["savings_offset"], -229_479_229, 5),
-      "manual 230,018,462 / sweep -229,479,229")
+      all(m["swept"] for m in closed),
+      f"{sum(1 for m in closed if m['swept'])}/{len(closed)}")
+check("the savings balance is opening 260M + surplus + the loan-funded 230M",
+      close(summ["totals"]["closing_balance"], 526_628_193, 5),
+      f"{summ['totals']['closing_balance']:,.0f}")
+check("2026-08 keeps the real 230M transfer and sweeps only the month's surplus",
+      close([m for m in summ["months"] if m["month"] == "2026-08"][0]["savings_in_loan"], 230_018_462, 5)
+      and close([m for m in summ["months"] if m["month"] == "2026-08"][0]["sweep_in"], 539_233, 5),
+      "loan-funded 230,018,462 / sweep in 539,233")
 check("members are listed for the per-member table",
       isinstance(summ["members"], list) and len(summ["members"]) >= 2, str(summ["members"]))
 
@@ -129,7 +130,9 @@ print("\n== sweep rows are visible as ordinary transactions ==")
 s, tx = call("GET", "/api/transactions?limit=5000", token=TOK)
 offsets = [t for t in tx if t.get("auto_offset_month")]
 check("44 rows are marked as automatic offsets", len(offsets) == 44, str(len(offsets)))
-check("offset rows are Savings type", all(t["type"] == "Savings" for t in offsets))
+check("offset rows are Savings transfers or Withdrawals",
+      all(t["type"] in ("Savings", "Withdrawal") for t in offsets),
+      str(sorted({t["type"] for t in offsets})))
 check("offset descriptions name their month",
       all(t["auto_offset_month"] in (t.get("description") or "") for t in offsets),
       offsets[0]["description"] if offsets else "")
@@ -139,12 +142,18 @@ s, rep = call("GET", "/api/statements/income", token=TOK)
 check("income statement loads", s == 200 and "income_lines" in rep, f"HTTP {s}")
 check("totals internally consistent", close(rep["income_total"] - rep["expense_total"], rep["surplus"]),
       f"surplus {rep['surplus']:,.0f}")
-check("nothing left unallocated (all months are closed)",
-      close(rep["unallocated"], 0, 5), f"unallocated {rep['unallocated']:,.0f}")
-check("savings split into recorded + sweep",
-      close(rep["savings_total"], rep["savings_manual"] + rep["savings_offset"])
-      and not close(rep["savings_offset"], 0),
-      f"manual {rep['savings_manual']:,.0f} + sweep {rep['savings_offset']:,.0f}")
+check("borrowing is never income",
+      close(rep["income_total"], 2_054_774_297, 5), f"{rep['income_total']:,.0f}")
+check("transfers and loans stay below the line, out of the surplus",
+      close(rep["financing"]["savings_in"], 361_374_438, 5)
+      and close(rep["financing"]["withdrawals"], 324_764_707, 5)
+      and close(rep["financing"]["loan_borrowed"], 300_000_000, 5)
+      and close(rep["financing"]["savings_in_funded_by_loan"], 230_018_462, 5),
+      f"in {rep['financing']['savings_in']:,.0f} out {rep['financing']['withdrawals']:,.0f}"
+      f" borrowed {rep['financing']['loan_borrowed']:,.0f}")
+check("income-funded savings net of withdrawals equals the surplus",
+      close(rep["financing"]["savings_net"], rep["surplus"], 5),
+      f"net {rep['financing']['savings_net']:,.0f} vs surplus {rep['surplus']:,.0f}")
 check("expense groups are subtotalled", len(rep["expense_groups"]) >= 2, str(len(rep["expense_groups"])))
 check("monthly rows returned", len(rep["months"]) == 44, str(len(rep["months"])))
 s, one = call("GET", "/api/statements/income?start=2026-08-01&end=2026-08-31", token=TOK)
@@ -154,9 +163,12 @@ check("a single month can be reported", s == 200 and len(one["months"]) == 1,
 print("\n== balance sheet ==")
 s, bs = call("GET", "/api/statements/balance-sheet", token=TOK)
 check("balance sheet loads", s == 200 and "net_worth" in bs, f"HTTP {s}")
-check("financial assets equal income - expenses",
-      close(bs["cash_and_savings"]["total"], bs["from_activity"]["income"] - bs["from_activity"]["expenses"], 5),
-      f"{bs['cash_and_savings']['total']:,.0f}")
+check("the balance sheet reconciles: opening balances + lifetime surplus = net worth",
+      close(bs["reconciliation"]["difference"], 0, 0.5),
+      f"expected {bs['reconciliation']['expected_net_worth']:,.0f} actual {bs['net_worth']:,.0f}")
+check("money in the accounts is opening + surplus + what is still borrowed",
+      close(bs["money_total"], 260_000_000 + 36_609_731 + 300_000_000, 5),
+      f"{bs['money_total']:,.0f}")
 base_assets = bs["total_assets"]
 base_net = bs["net_worth"]
 print(f"     assets={base_assets:,.0f}  liabilities={bs['liabilities_total']:,.0f}  net worth={base_net:,.0f}")

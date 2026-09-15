@@ -82,9 +82,9 @@ def list_accounts(db: Session, include_inactive: bool = False) -> list:
     return query.order_by(models.Account.kind.desc(), models.Account.name).all()
 
 
-def account_balances(db: Session, as_of: Optional[date] = None) -> dict:
+def account_balances(db: Session, as_of: Optional[date] = None, include_inactive: bool = False) -> dict:
     """Every account's balance, together with the movements that produced it."""
-    accounts = list_accounts(db)
+    accounts = list_accounts(db, include_inactive)
     kind_of = {a.id: a.kind for a in accounts}
     balances = {a.id: float(a.opening_balance or 0.0) for a in accounts}
     moves = {a.id: {"in": 0.0, "out": 0.0} for a in accounts}
@@ -126,6 +126,7 @@ def account_balances(db: Session, as_of: Optional[date] = None) -> dict:
         "opening_balance": float(a.opening_balance or 0.0),
         "opening_date": a.opening_date.isoformat() if a.opening_date else None,
         "note": a.note,
+        "is_active": a.is_active,
         "movements_in": moves[a.id]["in"],
         "movements_out": moves[a.id]["out"],
         "balance": balances[a.id],

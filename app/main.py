@@ -363,10 +363,13 @@ def run_offsets_legacy(db: Session = Depends(get_db),
 
 
 # ---------------- Accounts ----------------
-@app.get("/api/accounts", response_model=List[schemas.AccountOut])
+@app.get("/api/accounts", response_model=List[schemas.AccountBalanceOut])
 def get_accounts(include_inactive: bool = False, db: Session = Depends(get_db),
                  current_user: models.User = Depends(get_current_user)):
-    return finance.list_accounts(db, include_inactive)
+    """Each account with its opening balance, the movements since, and the balance."""
+    if include_inactive:
+        return finance.account_balances(db, include_inactive=True)["accounts"]
+    return finance.account_balances(db)["accounts"]
 
 
 @app.post("/api/accounts", response_model=schemas.AccountOut, status_code=status.HTTP_201_CREATED)

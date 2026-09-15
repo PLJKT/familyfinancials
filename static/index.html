@@ -47,6 +47,8 @@
           <ul class="navbar-nav me-auto">
             <li class="nav-item"><a class="nav-link active" data-page="dashboard" href="#">Dashboard</a></li>
             <li class="nav-item"><a class="nav-link" data-page="transactions" href="#">Transactions</a></li>
+            <li class="nav-item"><a class="nav-link" data-page="savings" href="#">Savings</a></li>
+            <li class="nav-item"><a class="nav-link" data-page="statements" href="#">Statements</a></li>
             <li class="nav-item"><a class="nav-link" data-page="reports" href="#">Reports</a></li>
             <li class="nav-item" id="nav-admin" style="display:none"><a class="nav-link" data-page="admin" href="#">Admin</a></li>
           </ul>
@@ -62,11 +64,158 @@
 
       <!-- Dashboard -->
       <section id="page-dashboard" class="page">
-        <h4 class="mb-3">Dashboard</h4>
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h4 class="mb-0">Dashboard</h4>
+          <button class="btn btn-primary btn-sm" id="quick-saving-btn"><i class="bi bi-piggy-bank"></i> Add saving</button>
+        </div>
         <div class="row g-3 mb-4" id="kpi-cards"></div>
         <div class="row g-3">
           <div class="col-lg-8"><div class="card"><div class="card-body"><h6>12‑month trend</h6><canvas id="trend-chart" height="120"></canvas></div></div></div>
           <div class="col-lg-4"><div class="card"><div class="card-body"><h6>Totals</h6><canvas id="totals-chart" height="200"></canvas></div></div></div>
+        </div>
+      </section>
+
+      <!-- Savings -->
+      <section id="page-savings" class="page d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h4 class="mb-0">Savings</h4>
+          <div>
+            <button class="btn btn-primary btn-sm" id="add-saving-btn"><i class="bi bi-piggy-bank"></i> Add saving</button>
+            <button class="btn btn-outline-secondary btn-sm" id="run-offsets-btn"><i class="bi bi-arrow-repeat"></i> Refresh month-end sweep</button>
+          </div>
+        </div>
+
+        <div class="alert alert-light border small">
+          <strong>How the month-end sweep works.</strong> Once a month has ended, the system posts one automatic
+          Savings entry equal to <em>income − expenses − savings already recorded that month</em>, so a finished
+          month's savings always equal its surplus. The sweep is idempotent: it updates the same entry instead of
+          adding another one, and it runs by itself whenever data changes. The month you are currently in is left
+          alone until it ends.
+        </div>
+
+        <div class="row g-3 mb-3" id="savings-kpis"></div>
+
+        <div class="card mb-3">
+          <div class="card-body">
+            <h6 class="mb-3">Savings by month</h6>
+            <div class="table-responsive"><table class="table table-sm table-striped mb-0" id="savings-table">
+              <thead><tr>
+                <th>Month</th>
+                <th class="text-end">Income</th>
+                <th class="text-end">Expenses</th>
+                <th class="text-end">Surplus</th>
+                <th class="text-end">Recorded savings</th>
+                <th class="text-end">Month-end sweep</th>
+                <th class="text-end">Total savings</th>
+                <th></th>
+              </tr></thead>
+              <tbody></tbody>
+            </table></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-body">
+            <h6 class="mb-1">Recorded savings per family member</h6>
+            <p class="text-muted small">Manual saving entries only — the automatic sweep is shown above.</p>
+            <div class="table-responsive"><table class="table table-sm mb-0" id="savings-members-table">
+              <thead></thead><tbody></tbody>
+            </table></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Financial statements -->
+      <section id="page-statements" class="page d-none">
+        <div class="d-flex justify-content-between align-items-center mb-3">
+          <h4 class="mb-0">Financial statements</h4>
+          <button class="btn btn-outline-secondary btn-sm" id="print-statement-btn"><i class="bi bi-printer"></i> Print / save as PDF</button>
+        </div>
+
+        <ul class="nav nav-pills mb-3" id="statement-tabs">
+          <li class="nav-item"><a class="nav-link active" data-stmt="income" href="#">Income statement</a></li>
+          <li class="nav-item"><a class="nav-link" data-stmt="balance" href="#">Balance sheet</a></li>
+          <li class="nav-item"><a class="nav-link" data-stmt="items" href="#">Assets &amp; liabilities</a></li>
+        </ul>
+
+        <!-- Income statement -->
+        <div id="stmt-income">
+          <div class="card mb-3"><div class="card-body">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-2"><label class="form-label small">From</label><input type="date" class="form-control form-control-sm" id="stmt-from" /></div>
+              <div class="col-md-2"><label class="form-label small">To</label><input type="date" class="form-control form-control-sm" id="stmt-to" /></div>
+              <div class="col-md-5">
+                <label class="form-label small">Quick range</label><br />
+                <div class="btn-group btn-group-sm" role="group">
+                  <button class="btn btn-outline-secondary" data-range="month">This month</button>
+                  <button class="btn btn-outline-secondary" data-range="lastmonth">Last month</button>
+                  <button class="btn btn-outline-secondary" data-range="year">This year</button>
+                  <button class="btn btn-outline-secondary" data-range="all">All time</button>
+                </div>
+              </div>
+              <div class="col-md-3"><button class="btn btn-primary btn-sm w-100" id="stmt-run-btn">Generate</button></div>
+            </div>
+            <div class="form-text mt-2" id="stmt-period"></div>
+          </div></div>
+
+          <div class="row g-3">
+            <div class="col-lg-7">
+              <div class="card h-100"><div class="card-body">
+                <h6 class="mb-3">Income statement</h6>
+                <div id="income-statement"></div>
+              </div></div>
+            </div>
+            <div class="col-lg-5">
+              <div class="card h-100"><div class="card-body">
+                <h6 class="mb-3">Month by month</h6>
+                <div class="table-responsive"><table class="table table-sm table-striped mb-0" id="stmt-months-table">
+                  <thead><tr><th>Month</th><th class="text-end">Income</th><th class="text-end">Expenses</th>
+                    <th class="text-end">Surplus</th><th class="text-end">Savings</th></tr></thead>
+                  <tbody></tbody>
+                </table></div>
+              </div></div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Balance sheet -->
+        <div id="stmt-balance" class="d-none">
+          <div class="card mb-3"><div class="card-body">
+            <div class="row g-2 align-items-end">
+              <div class="col-md-3"><label class="form-label small">As of</label><input type="date" class="form-control form-control-sm" id="bs-asof" /></div>
+              <div class="col-md-3"><button class="btn btn-primary btn-sm w-100" id="bs-run-btn">Show balance sheet</button></div>
+              <div class="col-md-6 text-md-end"><span class="text-muted small" id="bs-note"></span></div>
+            </div>
+          </div></div>
+          <div id="balance-sheet"></div>
+        </div>
+
+        <!-- Assets & liabilities -->
+        <div id="stmt-items" class="d-none">
+          <div class="row g-3">
+            <div class="col-lg-6"><div class="card h-100"><div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Assets</h6>
+                <button class="btn btn-primary btn-sm" id="add-asset-btn"><i class="bi bi-plus-lg"></i> Add asset</button>
+              </div>
+              <div class="table-responsive"><table class="table table-sm mb-0" id="asset-table">
+                <thead><tr><th>Name</th><th>Kind</th><th class="text-end">Value</th><th></th></tr></thead>
+                <tbody></tbody>
+              </table></div>
+              <div class="text-muted small mt-2">Property, vehicle, investment, cash, other — everything the family owns outside of the transaction records.</div>
+            </div></div></div>
+            <div class="col-lg-6"><div class="card h-100"><div class="card-body">
+              <div class="d-flex justify-content-between align-items-center mb-2">
+                <h6 class="mb-0">Liabilities</h6>
+                <button class="btn btn-primary btn-sm" id="add-liability-btn"><i class="bi bi-plus-lg"></i> Add liability</button>
+              </div>
+              <div class="table-responsive"><table class="table table-sm mb-0" id="liability-table">
+                <thead><tr><th>Name</th><th>Kind</th><th class="text-end">Outstanding</th><th></th></tr></thead>
+                <tbody></tbody>
+              </table></div>
+              <div class="text-muted small mt-2">Mortgage, car loan, personal loan, credit card — the amounts still owed.</div>
+            </div></div></div>
+          </div>
         </div>
       </section>
 
@@ -185,8 +334,14 @@
       <div class="mb-3"><label class="form-label">Date</label><input type="date" class="form-control" id="trx-date" required /></div>
       <div class="mb-3"><label class="form-label">Type</label><select class="form-select" id="trx-type-input" required><option>Income</option><option>Expenses</option><option>Savings</option></select></div>
       <div class="mb-3"><label class="form-label">Category</label><select class="form-select" id="trx-category-input" required></select></div>
-      <div class="mb-3"><label class="form-label">Amount</label><input type="number" step="0.01" class="form-control" id="trx-amount" required /></div>
+      <div class="mb-3"><label class="form-label" id="trx-amount-label">Amount</label><input type="number" step="0.01" class="form-control" id="trx-amount" required />
+        <div class="form-text d-none" id="trx-amount-hint">How much was moved into savings this time.</div></div>
       <div class="mb-3"><label class="form-label">Description</label><input type="text" class="form-control" id="trx-description" /></div>
+      <div class="mb-3 d-none" id="trx-member-wrap">
+        <label class="form-label">Whose saving</label>
+        <select class="form-select" id="trx-member"></select>
+        <div class="form-text">Used for the per-member savings table.</div>
+      </div>
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save</button></div>
   </form>
@@ -240,6 +395,71 @@
       <div class="mb-3"><label class="form-label">New password (min 6 characters)</label><input type="text" class="form-control" id="pwd-new" minlength="6" required /></div>
     </div>
     <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save password</button></div>
+  </form>
+</div></div></div>
+
+<!-- Add saving modal -->
+<div class="modal fade" id="savingModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="saving-form">
+    <div class="modal-header"><h5 class="modal-title">Add a saving</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <div class="mb-3"><label class="form-label">Date</label><input type="date" class="form-control" id="sv-date" required /></div>
+      <div class="mb-3"><label class="form-label">Saving amount</label><input type="number" step="0.01" min="0.01" class="form-control" id="sv-amount" required />
+        <div class="form-text">Money put aside this time. The month-end sweep reconciles it with the month's surplus.</div></div>
+      <div class="mb-3"><label class="form-label">Whose saving</label><select class="form-select" id="sv-member"></select></div>
+      <div class="mb-3"><label class="form-label">Note</label><input type="text" class="form-control" id="sv-note" placeholder="optional" /></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Record saving</button></div>
+  </form>
+</div></div></div>
+
+<!-- Asset modal -->
+<div class="modal fade" id="assetModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="asset-form">
+    <div class="modal-header"><h5 class="modal-title" id="assetModalTitle">Add asset</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="asset-id" />
+      <div class="mb-3"><label class="form-label">Name</label><input type="text" class="form-control" id="asset-name" placeholder="e.g. Apartment II, Toyota Avanza, index funds" required /></div>
+      <div class="mb-3"><label class="form-label">Kind</label><select class="form-select" id="asset-kind">
+        <option value="property">property</option>
+        <option value="vehicle">vehicle</option>
+        <option value="investment">investment</option>
+        <option value="cash">cash</option>
+        <option value="other">other</option>
+      </select></div>
+      <div class="mb-3"><label class="form-label">Current value</label><input type="number" step="0.01" class="form-control" id="asset-value" required /></div>
+      <div class="mb-3"><label class="form-label">Acquired on</label><input type="date" class="form-control" id="asset-acquired" /></div>
+      <div class="mb-3"><label class="form-label">Note</label><input type="text" class="form-control" id="asset-note" /></div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="asset-active" checked />
+        <label class="form-check-label" for="asset-active">Still owned (include in the balance sheet)</label></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save asset</button></div>
+  </form>
+</div></div></div>
+
+<!-- Liability modal -->
+<div class="modal fade" id="liabilityModal" tabindex="-1"><div class="modal-dialog"><div class="modal-content">
+  <form id="liability-form">
+    <div class="modal-header"><h5 class="modal-title" id="liabilityModalTitle">Add liability</h5><button type="button" class="btn-close" data-bs-dismiss="modal"></button></div>
+    <div class="modal-body">
+      <input type="hidden" id="liability-id" />
+      <div class="mb-3"><label class="form-label">Name</label><input type="text" class="form-control" id="liability-name" placeholder="e.g. House mortgage, car loan" required /></div>
+      <div class="mb-3"><label class="form-label">Kind</label><select class="form-select" id="liability-kind">
+        <option value="mortgage">mortgage</option>
+        <option value="car_loan">car_loan</option>
+        <option value="personal_loan">personal_loan</option>
+        <option value="credit_card">credit_card</option>
+        <option value="other">other</option>
+      </select></div>
+      <div class="mb-3"><label class="form-label">Outstanding</label><input type="number" step="0.01" class="form-control" id="liability-outstanding" required /></div>
+      <div class="mb-3"><label class="form-label">Monthly payment</label><input type="number" step="0.01" class="form-control" id="liability-payment" /></div>
+      <div class="mb-3"><label class="form-label">Interest rate (annual %)</label><input type="number" step="0.01" class="form-control" id="liability-rate" /></div>
+      <div class="mb-3"><label class="form-label">Started on</label><input type="date" class="form-control" id="liability-started" /></div>
+      <div class="mb-3"><label class="form-label">Note</label><input type="text" class="form-control" id="liability-note" /></div>
+      <div class="form-check"><input class="form-check-input" type="checkbox" id="liability-active" checked />
+        <label class="form-check-label" for="liability-active">Still owed (include in the balance sheet)</label></div>
+    </div>
+    <div class="modal-footer"><button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button><button type="submit" class="btn btn-primary">Save liability</button></div>
   </form>
 </div></div></div>
 

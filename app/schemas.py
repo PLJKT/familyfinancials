@@ -84,7 +84,8 @@ class TransactionBase(BaseModel):
 
 
 class TransactionCreate(TransactionBase):
-    pass
+    # whose saving this is (family member); defaults to the author when omitted
+    member_id: Optional[int] = None
 
 
 class TransactionUpdate(BaseModel):
@@ -93,16 +94,100 @@ class TransactionUpdate(BaseModel):
     category_id: Optional[int] = None
     amount: Optional[float] = None
     description: Optional[str] = None
+    member_id: Optional[int] = None
 
 
 class TransactionOut(TransactionBase):
     id: int
     created_by: Optional[int] = None
+    member_id: Optional[int] = None
+    auto_offset_month: Optional[str] = None
     created_at: datetime
     category: CategoryOut
 
     class Config:
         from_attributes = True
+
+
+# ---------- Savings ----------
+class SavingsEntryCreate(BaseModel):
+    """A saving contribution recorded from the Savings page."""
+
+    date: date
+    amount: float
+    member_id: Optional[int] = None      # whose saving; defaults to the author
+    note: Optional[str] = None
+    category_id: Optional[int] = None    # defaults to the 'Saving' category
+
+
+# ---------- Balance sheet: assets / liabilities ----------
+class AssetItemBase(BaseModel):
+    name: str
+    kind: str = "other"                  # property | vehicle | investment | cash | other
+    value: float = 0.0
+    acquired_on: Optional[date] = None
+    note: Optional[str] = None
+    is_active: bool = True
+
+
+class AssetItemCreate(AssetItemBase):
+    pass
+
+
+class AssetItemUpdate(BaseModel):
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    value: Optional[float] = None
+    acquired_on: Optional[date] = None
+    note: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class AssetItemOut(AssetItemBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class LiabilityItemBase(BaseModel):
+    name: str
+    kind: str = "other"                  # mortgage | car_loan | personal_loan | credit_card | other
+    outstanding: float = 0.0
+    monthly_payment: Optional[float] = None
+    interest_rate: Optional[float] = None
+    started_on: Optional[date] = None
+    note: Optional[str] = None
+    is_active: bool = True
+
+
+class LiabilityItemCreate(LiabilityItemBase):
+    pass
+
+
+class LiabilityItemUpdate(BaseModel):
+    name: Optional[str] = None
+    kind: Optional[str] = None
+    outstanding: Optional[float] = None
+    monthly_payment: Optional[float] = None
+    interest_rate: Optional[float] = None
+    started_on: Optional[date] = None
+    note: Optional[str] = None
+    is_active: Optional[bool] = None
+
+
+class LiabilityItemOut(LiabilityItemBase):
+    id: int
+
+    class Config:
+        from_attributes = True
+
+
+class OffsetRunResult(BaseModel):
+    created: int
+    updated: int
+    removed: int
+    closed_months: List[str] = []
 
 
 # ---------- Reports ----------

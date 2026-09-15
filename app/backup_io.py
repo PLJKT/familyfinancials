@@ -83,6 +83,13 @@ _HEADER_ALIASES = {
     "memo": "description",
     "keterangan": "description",
     "备注": "description",
+    # optional fidelity columns (older files simply do not have them)
+    "member": "member",
+    "savedby": "member",
+    "familymember": "member",
+    "autooffset": "autooffset",
+    "autooffsetmonth": "autooffset",
+    "monthlyoffset": "autooffset",
     "id": "id",
     "no": "id",
     "row": "id",
@@ -123,6 +130,8 @@ class ParsedRow:
     category: str
     amount: float
     description: str
+    member: Optional[str] = None            # username of the family member (optional column)
+    auto_offset_month: Optional[str] = None  # "YYYY-MM" for automatic sweep rows
 
 
 @dataclass
@@ -214,6 +223,27 @@ def parse_amount(value: Any) -> float:
 def _normalize_header(name: Any) -> Optional[str]:
     key = re.sub(r"[\s_\-]+", "", _clean_text(name)).lower()
     return _HEADER_ALIASES.get(key)
+
+
+def _clean_month(value: Any) -> Optional[str]:
+    """Coerce a cell into 'YYYY-MM', tolerating datetime cells and '08/2026'."""
+    text = _clean_text(value)
+    if not text:
+        return None
+    text = text.strip()
+    if isinstance(value, (date, datetime)):
+        return value.strftime("%Y-%m")
+    m = re.match(r"^(\d{4})[-/. ]?(\d{1,2})", text)
+    if m:
+        year, month = int(m.group(1)), int(m.group(2))
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+    m = re.match(r"^(\d{1,2})[-/. ](\d{4})$", text)
+    if m:
+        month, year = int(m.group(1)), int(m.group(2))
+        if 1 <= month <= 12:
+            return f"{year:04d}-{month:02d}"
+    return None
 
 
 # --------------------------------------------------------------------------- #
@@ -337,6 +367,8 @@ def parse_backup_file(filename: str, content: bytes) -> ParsedBackup:
             category=raw_category or UNCATEGORIZED,
             amount=row_amount,
             description=_clean_text(cell(row, "description")),
+            member=_clean_text(cell(row, "member")) or None,
+            auto_offset_month=_clean_month(cell(row, "autooffset")),
         ))
 
     # Optional Categories sheet: keeps type/group metadata on a full restore
@@ -403,10 +435,18 @@ def _parse_categories_sheet(content: bytes) -> List[Dict[str, str]]:
 # --------------------------------------------------------------------------- #
 # export builders
 # --------------------------------------------------------------------------- #
+def _member_label(transaction: Any) -> str:
+    """Username of the family member a row belongs to (blank when unattributed)."""
+    member = getattr(transaction, "member", None)
+    if member is None:
+        return ""
+    return member.username or member.full_name or ""
+
+
 def build_csv_text(transactions: Iterable[Any]) -> str:
     out = io.StringIO()
     writer = csv.writer(out)
-    writer.writerow(["Date", "Type", "Category", "Amount", "Description"])
+    writer.writerow(["Date", "Type", "Category", "Amount", "Description", "Member", "AutoOffset"])
     for t in transactions:
         writer.writerow([
             t.date.isoformat(),
@@ -414,6 +454,8 @@ def build_csv_text(transactions: Iterable[Any]) -> str:
             t.category.name if t.category else "",
             t.amount,
             t.description or "",
+            _member_label(t),
+            getattr(t, "auto_offset_month", None) or "",
         ])
     return out.getvalue()
 
@@ -429,7 +471,7 @@ def build_workbook_bytes(transactions: Iterable[Any], categories: Iterable[Any])
     wb = Workbook()
     ws = wb.active
     ws.title = "Transactions"
-    ws.append(["Date", "Type", "Category", "Amount", "Description"])
+    ws.append(["Date", "Type", "Category", "Amount", "Description", "Member", "AutoOffset"])
     for t in transactions:
         ws.append([
             t.date.isoformat(),
@@ -437,8 +479,10 @@ def build_workbook_bytes(transactions: Iterable[Any], categories: Iterable[Any])
             t.category.name if t.category else "",
             t.amount,
             t.description or "",
+            _member_label(t),
+            getattr(t, "auto_offset_month", None) or "",
         ])
-    _style_sheet(ws, widths=(12, 12, 30, 16, 50), money_col=4)
+    _style_sheet(ws, widths=(12, 12, 30, 16, 50, 14, 12), money_col=4)
 
     ws2 = wb.create_sheet("Categories")
     ws2.append(["Category", "Type", "Group", "Description"])

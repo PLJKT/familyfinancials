@@ -1,8 +1,10 @@
 from datetime import datetime
+
 from sqlalchemy import (
     Column, Integer, String, Float, Date, DateTime, Boolean, ForeignKey, Text
 )
 from sqlalchemy.orm import relationship
+
 from .database import Base
 
 
@@ -35,7 +37,12 @@ class User(Base):
     is_approved = Column(Boolean, default=False, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
 
-    transactions = relationship("Transaction", back_populates="creator")
+    transactions = relationship(
+        "Transaction", back_populates="creator", foreign_keys="Transaction.created_by"
+    )
+    savings_entries = relationship(
+        "Transaction", back_populates="member", foreign_keys="Transaction.member_id"
+    )
 
 
 class Category(Base):
@@ -60,8 +67,51 @@ class Transaction(Base):
     amount = Column(Float, nullable=False, default=0.0)
     description = Column(Text, nullable=True)
     created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    # whose saving this is (family member); falls back to created_by when empty
+    member_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    # set on the automatic month-end saving offset rows, e.g. "2026-08"
+    auto_offset_month = Column(String(7), nullable=True, index=True)
     created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     category = relationship("Category", back_populates="transactions")
-    creator = relationship("User", back_populates="transactions")
+    creator = relationship("User", back_populates="transactions", foreign_keys=[created_by])
+    member = relationship("User", back_populates="savings_entries", foreign_keys=[member_id])
+
+
+class AssetItem(Base):
+    """User-entered asset that is not derived from transactions (property, vehicle, ...)."""
+
+    __tablename__ = "asset_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    # property | vehicle | investment | cash | other
+    kind = Column(String(40), nullable=False, default="other")
+    value = Column(Float, nullable=False, default=0.0)
+    acquired_on = Column(Date, nullable=True)
+    note = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
+class LiabilityItem(Base):
+    """User-entered debt: mortgage, car loan, personal loan, credit card, ..."""
+
+    __tablename__ = "liability_items"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String(200), nullable=False)
+    # mortgage | car_loan | personal_loan | credit_card | other
+    kind = Column(String(40), nullable=False, default="other")
+    outstanding = Column(Float, nullable=False, default=0.0)
+    monthly_payment = Column(Float, nullable=True)
+    interest_rate = Column(Float, nullable=True)    # annual, percent
+    started_on = Column(Date, nullable=True)
+    note = Column(Text, nullable=True)
+    is_active = Column(Boolean, nullable=False, default=True)
+    created_by = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

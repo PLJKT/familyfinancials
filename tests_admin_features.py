@@ -187,10 +187,13 @@ s, d = call("POST", "/api/admin/import", {"confirm": "REPLACE_ALL"},
 res = json.loads(d)
 check("hand-edited file imports", s == 200 and res["imported"] == 2, f"HTTP {s}: {d[:200]}")
 check("new category auto-created", res.get("categories_created", 0) >= 1, f"created={res.get('categories_created')}")
-tx = json.loads(call("GET", "/api/transactions?limit=10", token=admin_tok)[1])
-amounts = sorted(t["amount"] for t in tx)
+tx = json.loads(call("GET", "/api/transactions?limit=50", token=admin_tok)[1])
+amounts = sorted(t["amount"] for t in tx if not t.get("auto_offset_month"))
 check("localised amount 1.234,50 parsed as 1234.5", amounts == [1234.5, 1500000.0], f"{amounts}")
 check("type alias 'expense' normalised", any(t["type"] == "Expenses" for t in tx))
+check("the imported month got its automatic sweep row",
+      any(t.get("auto_offset_month") for t in tx),
+      f"offsets={[t.get('auto_offset_month') for t in tx if t.get('auto_offset_month')]}")
 check("style: master can still delete a category", True)
 
 print("== 8. restore the full data set again ==")

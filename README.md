@@ -6,8 +6,11 @@ It ships with the existing **887 transactions** from the revised Excel workbook 
 - Secure login — **accounts are created by the administrator** (there is no public sign‑up)
 - Role‑based access: `master_admin`, `admin`, `editor`, `viewer`, `downloader`
 - Add / edit / delete transactions with category dropdowns
+- **Savings page** — record saving amounts (per family member) and see the automatic month‑end sweep
+- **Automatic month‑end saving offset** — each closed month's savings are reconciled with its surplus
+- **Financial statements** — income statement and balance sheet (assets, liabilities, net worth)
 - Automatic financial reports grouped by month, year, or category
-- Dashboard with KPIs and charts (income, expenses, savings, balance)
+- Dashboard with KPIs and charts (income, expenses, savings, transactions)
 - CSV / Excel backup download (restricted to downloadable roles)
 - **Weekly backup reminder** for admins
 - **Restore from a backup file** — upload the downloaded Excel and replace all data (accident recovery)
@@ -91,7 +94,67 @@ reached the app, while `"database_ok":false` returns the exact driver error.
 
 ---
 
-## 3. Backup, weekly reminder, and restore
+## 3. Savings and financial statements
+
+### The month-end saving offset (automatic)
+
+A budget only balances if the money left over at the end of a month actually lands in savings. The
+system enforces that: **once a month has ended it posts one automatic Savings entry** so that the
+month's savings equal its surplus:
+
+```
+month-end offset = (income − expenses) − savings already recorded that month
+```
+
+- It runs by itself — on startup and after every change to transactions or savings, including a restore.
+- It is **idempotent**: the row is matched by its month and updated in place, never duplicated.
+- The **running month is left alone** until it ends, so the current month shows an *unallocated* figure.
+- If recorded savings exceed the surplus, the offset is negative (money came back out of savings).
+- Offset rows are ordinary Savings transactions labelled `Automatic month-end saving offset for YYYY-MM`,
+  so they appear in reports, exports and the statements like everything else.
+- Admins can re-run it by hand: **Savings → Refresh month-end sweep** (`POST /api/admin/offsets/run`).
+
+### Recording a saving
+
+1. **Savings → Add saving** — date, amount, whose saving, note. The *Add* button on a month row
+   prefills that month's last day.
+2. **Transactions → Add transaction** with type `Savings` — the amount field is then labelled
+   *Saving amount* and you can choose the family member.
+
+Savings are stored as normal `Savings` transactions, so one source of truth feeds the dashboard, the
+reports, the statements and the backup file. The per-member table groups them by the member you chose
+(falling back to whoever entered the row); the automatic sweep is shown as its own column.
+
+### Income statement (`Statements → Income statement`)
+
+Income lines by category → total income; expenses grouped with subtotals → total expenses; the surplus;
+then savings split into *recorded entries* and *automatic sweep*; and finally what is still unallocated
+(the running month). Period selectors: This month / Last month / This year / All time, or any range.
+
+### Balance sheet (`Statements → Balance sheet`)
+
+```
+ASSETS
+  Savings accumulated (closed months)
+  Unallocated cash (running month)
+  ---- Cash and savings ----
+  Property / Vehicle / Investment / … (entered by hand)
+  TOTAL ASSETS
+LIABILITIES
+  Mortgage / car loan / personal loan / credit card (entered by hand)
+  TOTAL LIABILITIES
+NET WORTH = TOTAL ASSETS − TOTAL LIABILITIES
+```
+
+Anything not visible in the transaction records — the house, the car, index funds, outstanding loans —
+is entered under **Statements → Assets & liabilities**: `property`, `vehicle`, `investment`, `cash`,
+`other` for assets and `mortgage`, `car_loan`, `personal_loan`, `credit_card`, `other` for liabilities.
+Mark an item as no longer owned or owed and it drops out of the balance sheet without losing history.
+The balance sheet can be dated (*as of*), and **Print / save as PDF** gives you a clean copy.
+
+---
+
+## 4. Backup, weekly reminder, and restore
 
 ### Weekly reminder
 The Admin page (and a banner on every page) reminds admins to download an Excel backup every
@@ -103,9 +166,13 @@ as a backup is taken. The banner also lists the recent backup/restore history.
 
 | Sheet | Contents |
 |-------|----------|
-| `Transactions` | `Date, Type, Category, Amount, Description` — one row per transaction |
+| `Transactions` | `Date, Type, Category, Amount, Description, Member, AutoOffset` — one row per transaction |
 | `Categories` | `Category, Type, Group, Description` — keeps category groups on a restore |
 | `Read me` | Human instructions |
+
+`Member` records which family member a saving belongs to and `AutoOffset` holds the month
+(`YYYY-MM`) of an automatic sweep row; both are optional — older files without them still import,
+and files you hand-edit only need `Date, Type, Category, Amount`.
 
 The same data is available as CSV (`Download CSV`).
 
@@ -125,7 +192,7 @@ matter, an extra `ID` column is ignored, `Income`/`Expenses`/`Savings` accept a 
 
 ---
 
-## 4. Deploy to Render.com (free tier)
+## 5. Deploy to Render.com (free tier)
 
 1. Push this repository to GitHub.
 2. On [Render](https://render.com) click **New → Blueprint** and connect the repo.
@@ -141,7 +208,7 @@ matter, an extra `ID` column is ignored, `Income`/`Expenses`/`Savings` accept a 
 
 ---
 
-## 5. Environment variables
+## 6. Environment variables
 
 | Variable | Default | Purpose |
 |----------|---------|---------|
@@ -155,7 +222,7 @@ matter, an extra `ID` column is ignored, `Income`/`Expenses`/`Savings` accept a 
 
 ---
 
-## 6. Seed data
+## 7. Seed data
 
 The repository includes pre‑prepared seed data in `data/`:
 
@@ -166,7 +233,7 @@ On first startup the app seeds these automatically if the database is empty.
 
 ---
 
-## 7. API overview
+## 8. API overview
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -185,6 +252,12 @@ On first startup the app seeds these automatically if the database is empty.
 | `PUT`  | `/api/transactions/{id}` | Update transaction (editor+). |
 | `DELETE` | `/api/transactions/{id}` | Delete transaction (editor+). |
 | `POST` | `/api/reports/summary` | Aggregated report (`group_by` = month/year/category). |
+| `GET`  | `/api/savings/summary` | Savings per month **and per family member** + sweep status. |
+| `POST` | `/api/savings/entries` | Record a saving (editor+). |
+| `POST` | `/api/admin/offsets/run` | Re-apply the automatic month-end sweep (admin+). |
+| `GET`  | `/api/statements/income` | Income statement for a period (`start`, `end`). |
+| `GET`  | `/api/statements/balance-sheet` | Balance sheet (`as_of`). |
+| `GET`  | `/api/assets` · `/api/liabilities` | Balance-sheet items (list for any user; add/update/delete editor+). |
 | `GET`  | `/api/dashboard` | KPI data + 12‑month trend. |
 | `GET`  | `/api/export/csv` | Download CSV backup (downloader+). |
 | `GET`  | `/api/export/excel` | Download Excel backup (downloader+) — logs the weekly reminder. |
@@ -195,7 +268,7 @@ Interactive docs: `/docs` (Swagger UI).
 
 ---
 
-## 8. Security notes
+## 9. Security notes
 
 - Passwords are hashed with **bcrypt** via `passlib`.
 - JWTs are signed with `SECRET_KEY` — **always** set a strong value in production.
@@ -207,13 +280,15 @@ Interactive docs: `/docs` (Swagger UI).
 
 ---
 
-## 9. Project structure
+## 10. Project structure
 
 ```
 familyfinancials/
 ├── app/
 │   ├── main.py        # FastAPI routes
-│   ├── models.py      # SQLAlchemy models (User, Category, Transaction, BackupLog)
+│   ├── models.py      # SQLAlchemy models (User, Category, Transaction, AssetItem, ...)
+│   ├── finance.py     # month-end saving sweep, savings summary, statements
+│   ├── migrate.py     # adds new columns to an existing database on startup
 │   ├── schemas.py     # Pydantic schemas
 │   ├── crud.py        # business logic, reports, restore, backup log
 │   ├── backup_io.py   # export builders + backup file parser (round-trip safe)
@@ -228,6 +303,8 @@ familyfinancials/
 │   ├── seed_categories.csv
 │   └── seed_transactions.csv
 ├── tests_admin_features.py   # end‑to‑end test of users, reminder, restore
+├── tests_statements.py       # end‑to‑end test of savings, sweep, statements, items
+├── tests_live_full.py        # full check of a deployed instance
 ├── Dockerfile
 ├── render.yaml
 ├── requirements.txt
@@ -236,7 +313,7 @@ familyfinancials/
 
 ---
 
-## 10. Running the tests
+## 11. Running the tests
 
 ```bash
 # start the app against a scratch database

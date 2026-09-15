@@ -10,8 +10,9 @@ from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
 
-from . import models, schemas, crud, auth, backup_io
+from . import models, schemas, crud, auth, backup_io, finance
 from .database import engine, get_db, SessionLocal, DATABASE_URL, safe_url, describe_url, BACKEND
+from .migrate import ensure_schema
 from .auth import (
     authenticate_user, create_access_token, get_current_user,
     require_roles, require_master, require_admin, require_editor, require_downloader,
@@ -36,7 +37,7 @@ def _database_check():
         return False, f"{type(exc).__name__}: {exc}"
 
 
-app = FastAPI(title="Family Financial Control System", version="1.2.0")
+app = FastAPI(title="Family Financial Control System", version="1.3.0")
 
 
 app.add_middleware(
@@ -56,9 +57,15 @@ def on_startup():
     logger.info("Starting Family Financial Control System v%s | storage=%s | %s | persistent=%s | started_at=%s",
                 app.version, BACKEND, describe_url(), not DATABASE_URL.startswith("sqlite"), STARTED_AT)
     try:
+        # create_all() never adds columns to existing tables, so patch first
         models.Base.metadata.create_all(bind=engine)
+        ensure_schema(engine)
         from .seed import seed_initial_data
         seed_initial_data()
+        with SessionLocal() as db:
+            sweep = finance.apply_month_end_offsets(db)
+        logger.info("Month-end saving offsets: %s created, %s updated, %s removed (%s closed months)",
+                    sweep["created"], sweep["updated"], sweep["removed"], len(sweep["closed_months"]))
     except Exception:
         logger.exception("STARTUP FAILED while preparing the database at %s", safe_url())
         raise
@@ -242,7 +249,12 @@ def add_transaction(data: schemas.TransactionCreate, db: Session = Depends(get_d
                     current_user: models.User = Depends(require_editor)):
     if not crud.get_category(db, data.category_id):
         raise HTTPException(status_code=400, detail="Invalid category")
-    return crud.create_transaction(db, data, current_user.id)
+    if data.member_id and not db.query(models.User).filter(models.User.id == data.member_id).first():
+        raise HTTPException(status_code=400, detail="Unknown family member")
+    trx = crud.create_transaction(db, data, current_user.id)
+    _refresh_offsets(db)          # keep the month-end sweep in step with the data
+    db.refresh(trx)
+    return trx
 
 
 @app.put("/api/transactions/{trx_id}", response_model=schemas.TransactionOut)
@@ -251,7 +263,10 @@ def edit_transaction(trx_id: int, data: schemas.TransactionUpdate, db: Session =
     trx = db.query(models.Transaction).filter(models.Transaction.id == trx_id).first()
     if not trx:
         raise HTTPException(status_code=404, detail="Transaction not found")
-    return crud.update_transaction(db, trx, data)
+    trx = crud.update_transaction(db, trx, data)
+    _refresh_offsets(db)
+    db.refresh(trx)
+    return trx
 
 
 @app.delete("/api/transactions/{trx_id}")
@@ -261,6 +276,7 @@ def remove_transaction(trx_id: int, db: Session = Depends(get_db),
     if not trx:
         raise HTTPException(status_code=404, detail="Transaction not found")
     crud.delete_transaction(db, trx)
+    _refresh_offsets(db)
     return {"ok": True}
 
 
@@ -274,6 +290,180 @@ def report_summary(query: schemas.ReportQuery, db: Session = Depends(get_db),
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return crud.dashboard_kpis(db)
+
+
+# ---------------- Savings ----------------
+def _refresh_offsets(db: Session) -> dict:
+    """Re-apply the automatic month-end sweep; never breaks the caller on failure."""
+    try:
+        return finance.apply_month_end_offsets(db)
+    except Exception:
+        logger.exception("Month-end saving offsets could not be refreshed")
+        db.rollback()
+        return {}
+
+
+@app.get("/api/savings/summary")
+def savings_summary(months: int = 12, db: Session = Depends(get_db),
+                    current_user: models.User = Depends(get_current_user)):
+    """Month-by-month savings per family member, with the automatic sweep status."""
+    return finance.savings_summary(db, months=months)
+
+
+@app.post("/api/savings/entries", response_model=schemas.TransactionOut)
+def add_saving(data: schemas.SavingsEntryCreate, db: Session = Depends(get_db),
+               current_user: models.User = Depends(require_editor)):
+    """Record a saving contribution (stored as a Savings transaction)."""
+    if data.amount <= 0:
+        raise HTTPException(status_code=400, detail="The saving amount must be greater than zero")
+
+    category_id = data.category_id
+    if category_id is None:
+        cat = (db.query(models.Category)
+               .filter(models.Category.name == finance.SAVING_CATEGORY_NAME).first()
+               or db.query(models.Category).filter(models.Category.type == "Savings").first())
+        if cat is None:
+            raise HTTPException(status_code=400, detail="No Savings category exists yet")
+        category_id = cat.id
+    if not crud.get_category(db, category_id):
+        raise HTTPException(status_code=400, detail="Invalid category")
+
+    if data.member_id and not db.query(models.User).filter(models.User.id == data.member_id).first():
+        raise HTTPException(status_code=400, detail="Unknown family member")
+
+    payload = schemas.TransactionCreate(
+        date=data.date, type="Savings", category_id=category_id, amount=float(data.amount),
+        description=data.note or "Saving contribution",
+        member_id=data.member_id or current_user.id,
+    )
+    trx = crud.create_transaction(db, payload, current_user.id)
+    _refresh_offsets(db)
+    db.refresh(trx)
+    return trx
+
+
+@app.post("/api/admin/offsets/run", response_model=schemas.OffsetRunResult)
+def run_offsets(db: Session = Depends(get_db),
+                current_user: models.User = Depends(require_admin)):
+    """Apply / refresh the automatic month-end saving offsets (idempotent)."""
+    return _refresh_offsets(db)
+
+
+# ---------------- Financial statements ----------------
+@app.get("/api/statements/income")
+def statement_income(start: Optional[date] = None, end: Optional[date] = None,
+                     db: Session = Depends(get_db),
+                     current_user: models.User = Depends(get_current_user)):
+    """Income statement: income, expenses (with group subtotals) and savings."""
+    return finance.income_statement(db, start, end)
+
+
+@app.get("/api/statements/balance-sheet")
+def statement_balance_sheet(as_of: Optional[date] = None, db: Session = Depends(get_db),
+                            current_user: models.User = Depends(get_current_user)):
+    """Balance sheet: activity money plus entered assets, less entered liabilities."""
+    return finance.balance_sheet(db, as_of)
+
+
+# ---------------- Assets & liabilities (balance-sheet items) ----------------
+@app.get("/api/assets", response_model=List[schemas.AssetItemOut])
+def list_assets(include_inactive: bool = False, db: Session = Depends(get_db),
+                current_user: models.User = Depends(get_current_user)):
+    q = db.query(models.AssetItem)
+    if not include_inactive:
+        q = q.filter(models.AssetItem.is_active.is_(True))
+    return q.order_by(models.AssetItem.kind, models.AssetItem.name).all()
+
+
+@app.post("/api/assets", response_model=schemas.AssetItemOut, status_code=status.HTTP_201_CREATED)
+def create_asset(data: schemas.AssetItemCreate, db: Session = Depends(get_db),
+                 current_user: models.User = Depends(require_editor)):
+    if data.kind not in finance.ASSET_KINDS:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of: {', '.join(finance.ASSET_KINDS)}")
+    item = models.AssetItem(**data.model_dump(), created_by=current_user.id)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.put("/api/assets/{item_id}", response_model=schemas.AssetItemOut)
+def update_asset(item_id: int, data: schemas.AssetItemUpdate, db: Session = Depends(get_db),
+                 current_user: models.User = Depends(require_editor)):
+    item = db.query(models.AssetItem).filter(models.AssetItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    values = data.model_dump(exclude_unset=True)
+    if values.get("kind") and values["kind"] not in finance.ASSET_KINDS:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of: {', '.join(finance.ASSET_KINDS)}")
+    for field, value in values.items():
+        setattr(item, field, value)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.delete("/api/assets/{item_id}")
+def delete_asset(item_id: int, db: Session = Depends(get_db),
+                 current_user: models.User = Depends(require_editor)):
+    item = db.query(models.AssetItem).filter(models.AssetItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
+
+
+@app.get("/api/liabilities", response_model=List[schemas.LiabilityItemOut])
+def list_liabilities(include_inactive: bool = False, db: Session = Depends(get_db),
+                     current_user: models.User = Depends(get_current_user)):
+    q = db.query(models.LiabilityItem)
+    if not include_inactive:
+        q = q.filter(models.LiabilityItem.is_active.is_(True))
+    return q.order_by(models.LiabilityItem.kind, models.LiabilityItem.name).all()
+
+
+@app.post("/api/liabilities", response_model=schemas.LiabilityItemOut, status_code=status.HTTP_201_CREATED)
+def create_liability(data: schemas.LiabilityItemCreate, db: Session = Depends(get_db),
+                     current_user: models.User = Depends(require_editor)):
+    if data.kind not in finance.LIABILITY_KINDS:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of: {', '.join(finance.LIABILITY_KINDS)}")
+    item = models.LiabilityItem(**data.model_dump(), created_by=current_user.id)
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.put("/api/liabilities/{item_id}", response_model=schemas.LiabilityItemOut)
+def update_liability(item_id: int, data: schemas.LiabilityItemUpdate, db: Session = Depends(get_db),
+                     current_user: models.User = Depends(require_editor)):
+    item = db.query(models.LiabilityItem).filter(models.LiabilityItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Liability not found")
+    values = data.model_dump(exclude_unset=True)
+    if values.get("kind") and values["kind"] not in finance.LIABILITY_KINDS:
+        raise HTTPException(status_code=400,
+                            detail=f"kind must be one of: {', '.join(finance.LIABILITY_KINDS)}")
+    for field, value in values.items():
+        setattr(item, field, value)
+    db.commit()
+    db.refresh(item)
+    return item
+
+
+@app.delete("/api/liabilities/{item_id}")
+def delete_liability(item_id: int, db: Session = Depends(get_db),
+                     current_user: models.User = Depends(require_editor)):
+    item = db.query(models.LiabilityItem).filter(models.LiabilityItem.id == item_id).first()
+    if not item:
+        raise HTTPException(status_code=404, detail="Liability not found")
+    db.delete(item)
+    db.commit()
+    return {"ok": True}
 
 
 # ---------------- Backup download ----------------
@@ -399,6 +589,8 @@ async def import_backup(
 
     crud.log_backup(db, "import", current_user, result["imported"],
                     note=f"Replaced {result['deleted']} rows from '{file.filename}'")
+    # the restored data needs its month-end sweep rebuilt from scratch
+    _refresh_offsets(db)
 
     warnings = []
     if parsed.errors:

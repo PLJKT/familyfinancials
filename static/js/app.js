@@ -132,8 +132,33 @@ function showPage(page) {
   $$(".navbar-nav .nav-link").forEach(a => a.classList.toggle("active", a.dataset.page === page));
   if (page === "dashboard") loadDashboard();
   if (page === "transactions") loadTransactions();
+  if (page === "savings") loadSavings();
+  if (page === "statements") loadStatements();
   if (page === "reports") runReport();
   if (page === "admin") { loadUsers(); loadBackupStatus(); }
+}
+
+function kpiCard(c) {
+  return `
+    <div class="col-6 col-md-4 col-xl">
+      <div class="card kpi-card ${c.cls}"><div class="card-body">
+        <div class="d-flex justify-content-between align-items-start">
+          <div><div class="text-muted small">${c.label}</div><div class="kpi-value">${c.value}</div></div>
+          <i class="bi ${c.icon} fs-4 text-muted"></i>
+        </div>
+      </div></div>
+    </div>`;
+}
+
+function isoDate(d = new Date()) {
+  const off = d.getTimezoneOffset();
+  return new Date(d.getTime() - off * 60000).toISOString().slice(0, 10);
+}
+
+function monthLabel(month) {
+  const [y, m] = String(month).split("-");
+  const names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  return `${names[Number(m) - 1] || m} ${y}`;
 }
 
 // ---------- dashboard ----------
@@ -143,18 +168,9 @@ async function loadDashboard() {
     { label: "Total income", value: fmtMoney(data.total_income), cls: "income", icon: "bi-arrow-down-circle" },
     { label: "Total expenses", value: fmtMoney(data.total_expenses), cls: "expense", icon: "bi-arrow-up-circle" },
     { label: "Savings", value: fmtMoney(data.total_savings), cls: "savings", icon: "bi-piggy-bank" },
-    { label: "Balance", value: fmtMoney(data.balance), cls: "balance", icon: "bi-wallet2" },
     { label: "Transactions", value: data.transaction_count, cls: "balance", icon: "bi-list-check" },
   ];
-  $("#kpi-cards").innerHTML = cards.map(c => `
-    <div class="col-6 col-md-4 col-xl">
-      <div class="card kpi-card ${c.cls}"><div class="card-body">
-        <div class="d-flex justify-content-between align-items-start">
-          <div><div class="text-muted small">${c.label}</div><div class="kpi-value">${c.value}</div></div>
-          <i class="bi ${c.icon} fs-4 text-muted"></i>
-        </div>
-      </div></div>
-    </div>`).join("");
+  $("#kpi-cards").innerHTML = cards.map(kpiCard).join("");
 
   const labels = data.trend.map(t => t.month);
   if (state.trendChart) state.trendChart.destroy();
@@ -207,6 +223,14 @@ async function loadTransactions() {
     </tr>`).join("");
 }
 
+function syncTrxSavingsUI() {
+  const isSaving = $("#trx-type-input").value === "Savings";
+  $("#trx-amount-label").textContent = isSaving ? "Saving amount" : "Amount";
+  $("#trx-amount-hint").classList.toggle("d-none", !isSaving);
+  $("#trx-member-wrap").classList.toggle("d-none", !isSaving);
+  if (isSaving) ensureMembers().then(fillMemberSelects);
+}
+
 function openAddTransaction() {
   $("#trxModalTitle").textContent = "Add transaction";
   $("#trx-id").value = "";
@@ -214,6 +238,7 @@ function openAddTransaction() {
   $("#trx-type-input").value = "Expenses";
   $("#trx-amount").value = "";
   $("#trx-description").value = "";
+  syncTrxSavingsUI();
   new bootstrap.Modal("#trxModal").show();
 }
 
@@ -228,6 +253,8 @@ async function editTransaction(id) {
   $("#trx-category-input").value = t.category_id;
   $("#trx-amount").value = t.amount;
   $("#trx-description").value = t.description || "";
+  syncTrxSavingsUI();
+  if (t.member_id) { await ensureMembers(); fillMemberSelects(); $("#trx-member").value = String(t.member_id); }
   new bootstrap.Modal("#trxModal").show();
 }
 
@@ -241,20 +268,22 @@ async function deleteTransaction(id) {
 async function saveTransaction(e) {
   e.preventDefault();
   const id = $("#trx-id").value;
+  const type = $("#trx-type-input").value;
   const payload = {
     date: $("#trx-date").value,
-    type: $("#trx-type-input").value,
+    type: type,
     category_id: Number($("#trx-category-input").value),
     amount: Number($("#trx-amount").value),
     description: $("#trx-description").value,
   };
+  if (type === "Savings" && $("#trx-member").value) payload.member_id = Number($("#trx-member").value);
   if (id) {
     await api("/api/transactions/" + id, { method: "PUT", body: JSON.stringify(payload) });
   } else {
     await api("/api/transactions", { method: "POST", body: JSON.stringify(payload) });
   }
   bootstrap.Modal.getInstance($("#trxModal")).hide();
-  showAlert("Transaction saved");
+  showAlert(type === "Savings" ? "Saving saved" : "Transaction saved");
   loadTransactions();
 }
 
@@ -543,6 +572,381 @@ async function runImport() {
   }
 }
 
+// ---------- savings ----------
+async function ensureMembers() {
+  if (state.members && state.members.length) return state.members;
+  try {
+    const s = await api("/api/savings/summary?months=1");
+    state.members = s.members || [];
+  } catch (err) {
+    state.members = state.user ? [{ id: state.user.id, name: state.user.full_name || state.user.username }] : [];
+  }
+  return state.members;
+}
+
+function fillMemberSelects(members) {
+  const opts = members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("");
+  ["#sv-member", "#trx-member"].forEach(sel => {
+    const el = $(sel);
+    if (!el) return;
+    el.innerHTML = opts;
+    if (state.user && members.some(m => m.id === state.user.id)) el.value = String(state.user.id);
+  });
+}
+
+async function loadSavings() {
+  const data = await api("/api/savings/summary?months=60");
+  state.savings = data;
+  const members = data.members || [];
+  state.members = members;
+  fillMemberSelects(members);
+
+  const t = data.totals || {};
+  const closed = data.months.filter(m => m.closed);
+  $("#savings-kpis").innerHTML = [
+    { label: "Total savings", value: fmtMoney(t.savings_total), cls: "savings", icon: "bi-piggy-bank" },
+    { label: "Recorded by the family", value: fmtMoney(t.savings_manual), cls: "savings", icon: "bi-people" },
+    { label: "Posted by the sweep", value: fmtMoney(t.savings_offset), cls: "balance", icon: "bi-arrow-repeat" },
+    { label: "Months swept", value: String(closed.length), cls: "income", icon: "bi-calendar-check" },
+  ].map(kpiCard).join("");
+
+  $("#run-offsets-btn").style.display = canAdmin() ? "" : "none";
+  $("#add-saving-btn").style.display = canEdit() ? "" : "none";
+
+  const badge = m => m.closed
+    ? (m.offset_applied
+      ? '<span class="badge bg-success-subtle text-success-emphasis">swept</span>'
+      : '<span class="badge bg-secondary-subtle text-secondary-emphasis">no sweep</span>')
+    : '<span class="badge bg-primary-subtle text-primary-emphasis">running</span>';
+
+  $("#savings-table tbody").innerHTML = [...data.months].reverse().map(m => `
+    <tr>
+      <td class="text-nowrap">${monthLabel(m.month)} ${badge(m)}</td>
+      <td class="text-end">${fmtMoney(m.income)}</td>
+      <td class="text-end">${fmtMoney(m.expenses)}</td>
+      <td class="text-end ${m.surplus < 0 ? "text-danger" : ""}">${fmtMoney(m.surplus)}</td>
+      <td class="text-end">${fmtMoney(m.savings_manual)}</td>
+      <td class="text-end ${m.savings_offset < 0 ? "text-danger" : ""}">${fmtMoney(m.savings_offset)}</td>
+      <td class="text-end fw-semibold">${fmtMoney(m.savings_total)}</td>
+      <td class="text-end text-nowrap">
+        ${canEdit() ? `<button class="btn btn-sm btn-outline-primary" onclick="openSaving('${m.month}')">Add</button>` : ""}
+      </td>
+    </tr>`).join("");
+
+  $("#savings-members-table thead").innerHTML =
+    `<tr><th>Month</th>${members.map(m => `<th class="text-end">${escapeHtml(m.name)}</th>`).join("")}<th class="text-end">Total</th></tr>`;
+  const rows = [...data.months].reverse().map(m => {
+    const cells = members.map(mm => `<td class="text-end">${fmtMoney((m.members || {})[String(mm.id)] || 0)}</td>`).join("");
+    const total = members.reduce((sum, mm) => sum + ((m.members || {})[String(mm.id)] || 0), 0);
+    return `<tr><td class="text-nowrap">${monthLabel(m.month)}</td>${cells}<td class="text-end fw-semibold">${fmtMoney(total)}</td></tr>`;
+  });
+  const totalsRow = `<tr class="table-light fw-semibold"><td>Total</td>` +
+    members.map(mm => {
+      const sum = data.months.reduce((s, m) => s + ((m.members || {})[String(mm.id)] || 0), 0);
+      return `<td class="text-end">${fmtMoney(sum)}</td>`;
+    }).join("") +
+    `<td class="text-end">${fmtMoney(t.savings_manual)}</td></tr>`;
+  $("#savings-members-table tbody").innerHTML = rows.join("") + totalsRow;
+}
+
+function openSaving(month) {
+  if (!canEdit()) return;
+  const dateInput = $("#sv-date");
+  if (month) {
+    const [y, m] = month.split("-");
+    const last = new Date(Number(y), Number(m), 0);
+    dateInput.value = isoDate(last);
+  } else {
+    dateInput.value = isoDate();
+  }
+  $("#sv-amount").value = "";
+  $("#sv-note").value = "";
+  ensureMembers().then(fillMemberSelects);
+  new bootstrap.Modal("#savingModal").show();
+}
+
+async function saveSaving(e) {
+  e.preventDefault();
+  const payload = {
+    date: $("#sv-date").value,
+    amount: Number($("#sv-amount").value),
+    note: $("#sv-note").value || null,
+  };
+  if ($("#sv-member").value) payload.member_id = Number($("#sv-member").value);
+  try {
+    await api("/api/savings/entries", { method: "POST", body: JSON.stringify(payload) });
+    bootstrap.Modal.getInstance($("#savingModal")).hide();
+    showAlert("Saving recorded — the month-end sweep has been recalculated.");
+    if (state.currentPage === "savings") loadSavings();
+    if (state.currentPage === "dashboard") loadDashboard();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+async function runOffsets() {
+  const btn = $("#run-offsets-btn");
+  btn.disabled = true;
+  try {
+    const out = await api("/api/admin/offsets/run", { method: "POST" });
+    showAlert(`Month-end sweep: ${out.created} created, ${out.updated} updated, ${out.removed} removed.`);
+    await loadSavings();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------- financial statements ----------
+function showStatementTab(tab) {
+  ["income", "balance", "items"].forEach(t => {
+    const el = $("#stmt-" + t);
+    if (el) el.classList.toggle("d-none", t !== tab);
+  });
+  $$("#statement-tabs .nav-link").forEach(a => a.classList.toggle("active", a.dataset.stmt === tab));
+  if (tab === "balance") loadBalanceSheet();
+  if (tab === "items") loadItems();
+}
+
+async function loadStatements() {
+  if (!$("#bs-asof").value) $("#bs-asof").value = isoDate();
+  if (!$("#stmt-from").value && !$("#stmt-to").value) setQuickRange("year", false);
+  await Promise.all([loadIncomeStatement(), loadBalanceSheet(), loadItems()]);
+}
+
+function setQuickRange(range, reload = true) {
+  const now = new Date();
+  const first = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastPrev = new Date(now.getFullYear(), now.getMonth(), 0);
+  const firstPrev = new Date(lastPrev.getFullYear(), lastPrev.getMonth(), 1);
+  if (range === "month") { $("#stmt-from").value = isoDate(first); $("#stmt-to").value = isoDate(now); }
+  if (range === "lastmonth") { $("#stmt-from").value = isoDate(firstPrev); $("#stmt-to").value = isoDate(lastPrev); }
+  if (range === "year") { $("#stmt-from").value = isoDate(new Date(now.getFullYear(), 0, 1)); $("#stmt-to").value = isoDate(now); }
+  if (range === "all") { $("#stmt-from").value = ""; $("#stmt-to").value = ""; }
+  if (reload) loadIncomeStatement();
+}
+
+function statementRow(label, amount, opts = {}) {
+  const cls = opts.cls || "";
+  const indent = opts.indent ? ' class="ps-4"' : "";
+  return `<tr class="${cls}"><td${indent}>${escapeHtml(label)}</td><td class="text-end">${fmtMoney(amount)}</td></tr>`;
+}
+
+async function loadIncomeStatement() {
+  const params = new URLSearchParams();
+  if ($("#stmt-from").value) params.append("start", $("#stmt-from").value);
+  if ($("#stmt-to").value) params.append("end", $("#stmt-to").value);
+  const rep = await api("/api/statements/income?" + params.toString());
+  $("#stmt-period").textContent = (rep.start || rep.end)
+    ? `Period: ${rep.start || "beginning"} → ${rep.end || "today"}`
+    : "All recorded months";
+
+  const byGroup = {};
+  rep.expense_lines.forEach(l => { (byGroup[l.group || "Uncategorised"] = byGroup[l.group || "Uncategorised"] || []).push(l); });
+
+  let html = '<table class="table table-sm mb-0"><tbody>';
+  html += '<tr class="table-light fw-semibold"><td>INCOME</td><td></td></tr>';
+  html += rep.income_lines.map(l => statementRow(l.category, l.amount, { indent: true })).join("") ||
+    '<tr><td class="ps-4 text-muted">none</td><td></td></tr>';
+  html += statementRow("Total income", rep.income_total, { cls: "fw-semibold border-top" });
+
+  html += '<tr class="table-light fw-semibold"><td>EXPENSES</td><td></td></tr>';
+  Object.entries(byGroup).forEach(([group, lines]) => {
+    const subtotal = (rep.expense_groups.find(g => g.group === group) || {}).amount ||
+      lines.reduce((s, l) => s + l.amount, 0);
+    html += statementRow(group, subtotal, { cls: "fw-semibold ps-3" });
+    html += lines.map(l => statementRow(l.category, l.amount, { indent: true })).join("");
+  });
+  if (!rep.expense_lines.length) html += '<tr><td class="ps-4 text-muted">none</td><td></td></tr>';
+  html += statementRow("Total expenses", rep.expense_total, { cls: "fw-semibold border-top" });
+
+  html += statementRow("Surplus (income − expenses)", rep.surplus, { cls: "fw-bold" });
+  html += '<tr class="table-light fw-semibold"><td>SAVINGS</td><td></td></tr>';
+  html += statementRow("Recorded saving entries", rep.savings_manual, { indent: true });
+  html += statementRow("Automatic month-end sweep", rep.savings_offset, { indent: true });
+  html += statementRow("Total savings", rep.savings_total, { cls: "fw-semibold border-top" });
+  html += statementRow("Unallocated (running month)", rep.unallocated, { cls: "text-muted" });
+  html += "</tbody></table>";
+  $("#income-statement").innerHTML = html;
+
+  $("#stmt-months-table tbody").innerHTML = [...rep.months].reverse().map(m => `
+    <tr>
+      <td class="text-nowrap">${monthLabel(m.month)}</td>
+      <td class="text-end">${fmtMoney(m.income)}</td>
+      <td class="text-end">${fmtMoney(m.expenses)}</td>
+      <td class="text-end ${m.surplus < 0 ? "text-danger" : ""}">${fmtMoney(m.surplus)}</td>
+      <td class="text-end">${fmtMoney(m.savings)}</td>
+    </tr>`).join("");
+}
+
+async function loadBalanceSheet() {
+  const asof = $("#bs-asof").value;
+  const bs = await api("/api/statements/balance-sheet" + (asof ? "?as_of=" + asof : ""));
+  $("#bs-note").textContent = bs.as_of ? `As of ${bs.as_of}` : "All recorded data";
+
+  let html = '<div class="row g-3"><div class="col-lg-6">';
+  html += '<div class="card mb-3"><div class="card-body"><h6>ASSETS</h6><table class="table table-sm mb-0"><tbody>';
+  html += statementRow("Savings accumulated (closed months)", bs.cash_and_savings.savings_accumulated, { indent: true });
+  html += statementRow("Unallocated cash (running month)", bs.cash_and_savings.unallocated_cash, { indent: true });
+  html += statementRow("Cash and savings", bs.cash_and_savings.total, { cls: "fw-semibold" });
+
+  const byKind = {};
+  bs.asset_items.forEach(i => { (byKind[i.kind] = byKind[i.kind] || []).push(i); });
+  Object.entries(byKind).forEach(([kind, items]) => {
+    html += statementRow(kind, items.reduce((s, i) => s + i.value, 0), { cls: "fw-semibold ps-3 text-capitalize" });
+    html += items.map(i => statementRow(i.name + (i.acquired_on ? ` (${i.acquired_on})` : ""), i.value, { indent: true })).join("");
+  });
+  if (!bs.asset_items.length) {
+    html += '<tr><td class="ps-4 text-muted">no property, vehicles or investments recorded yet</td><td></td></tr>';
+  }
+  html += statementRow("TOTAL ASSETS", bs.total_assets, { cls: "fw-bold table-light fs-6" });
+  html += "</tbody></table></div></div></div>";
+
+  html += '<div class="col-lg-6">';
+  html += '<div class="card mb-3"><div class="card-body"><h6>LIABILITIES</h6><table class="table table-sm mb-0"><tbody>';
+  if (bs.liability_items.length) {
+    bs.liability_items.forEach(i => {
+      const extra = i.interest_rate ? ` — ${i.interest_rate}% p.a.` : "";
+      html += statementRow(i.name + extra, i.outstanding, { indent: true });
+    });
+  } else {
+    html += '<tr><td class="ps-4 text-muted">nothing owed / nothing recorded</td><td></td></tr>';
+  }
+  html += statementRow("TOTAL LIABILITIES", bs.liabilities_total, { cls: "fw-bold table-light fs-6" });
+  html += "</tbody></table></div></div>";
+
+  html += `<div class="card"><div class="card-body">
+      <div class="d-flex justify-content-between align-items-center">
+        <div><h6 class="mb-0">NET WORTH</h6>
+          <div class="text-muted small">Total assets ${fmtMoney(bs.total_assets)} − liabilities ${fmtMoney(bs.liabilities_total)}</div></div>
+        <span class="fs-4 fw-bold ${bs.net_worth < 0 ? "text-danger" : "text-success"}">${fmtMoney(bs.net_worth)}</span>
+      </div>
+      <hr />
+      <div class="text-muted small">From the transaction records: income ${fmtMoney(bs.from_activity.income)},
+        expenses ${fmtMoney(bs.from_activity.expenses)}, savings ${fmtMoney(bs.from_activity.savings)}.</div>
+    </div></div></div></div>`;
+  $("#balance-sheet").innerHTML = html;
+}
+
+// ---------- assets & liabilities ----------
+async function loadItems() {
+  const [assets, liabilities] = await Promise.all([api("/api/assets"), api("/api/liabilities")]);
+  state.assets = assets;
+  state.liabilities = liabilities;
+  const editable = canEdit();
+  $("#add-asset-btn").style.display = editable ? "" : "none";
+  $("#add-liability-btn").style.display = editable ? "" : "none";
+
+  $("#asset-table tbody").innerHTML = assets.length ? assets.map(a => `
+    <tr><td>${escapeHtml(a.name)}</td><td class="text-capitalize">${escapeHtml(a.kind)}</td>
+      <td class="text-end">${fmtMoney(a.value)}</td>
+      <td class="text-end text-nowrap">${editable ? `
+        <button class="btn btn-sm btn-outline-secondary" onclick="openAsset(${a.id})">Edit</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteAsset(${a.id})">Delete</button>` : ""}</td>
+    </tr>`).join("") : '<tr><td colspan="4" class="text-muted">No assets recorded yet.</td></tr>';
+
+  $("#liability-table tbody").innerHTML = liabilities.length ? liabilities.map(l => `
+    <tr><td>${escapeHtml(l.name)}</td><td class="text-capitalize">${escapeHtml(l.kind)}</td>
+      <td class="text-end">${fmtMoney(l.outstanding)}</td>
+      <td class="text-end text-nowrap">${editable ? `
+        <button class="btn btn-sm btn-outline-secondary" onclick="openLiability(${l.id})">Edit</button>
+        <button class="btn btn-sm btn-outline-danger" onclick="deleteLiability(${l.id})">Delete</button>` : ""}</td>
+    </tr>`).join("") : '<tr><td colspan="4" class="text-muted">No liabilities recorded yet.</td></tr>';
+}
+
+function openAsset(id) {
+  const a = (state.assets || []).find(x => x.id === id);
+  $("#assetModalTitle").textContent = a ? "Edit asset" : "Add asset";
+  $("#asset-id").value = a ? a.id : "";
+  $("#asset-name").value = a ? a.name : "";
+  $("#asset-kind").value = a ? a.kind : "property";
+  $("#asset-value").value = a ? a.value : "";
+  $("#asset-acquired").value = a && a.acquired_on ? a.acquired_on : "";
+  $("#asset-note").value = a && a.note ? a.note : "";
+  $("#asset-active").checked = a ? a.is_active : true;
+  new bootstrap.Modal("#assetModal").show();
+}
+
+async function saveAsset(e) {
+  e.preventDefault();
+  const id = $("#asset-id").value;
+  const payload = {
+    name: $("#asset-name").value,
+    kind: $("#asset-kind").value,
+    value: Number($("#asset-value").value),
+    acquired_on: $("#asset-acquired").value || null,
+    note: $("#asset-note").value || null,
+    is_active: $("#asset-active").checked,
+  };
+  try {
+    if (id) await api("/api/assets/" + id, { method: "PUT", body: JSON.stringify(payload) });
+    else await api("/api/assets", { method: "POST", body: JSON.stringify(payload) });
+    bootstrap.Modal.getInstance($("#assetModal")).hide();
+    showAlert("Asset saved");
+    loadItems();
+    loadBalanceSheet();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+async function deleteAsset(id) {
+  if (!confirm("Remove this asset from the balance sheet?")) return;
+  await api("/api/assets/" + id, { method: "DELETE" });
+  showAlert("Asset removed");
+  loadItems();
+  loadBalanceSheet();
+}
+
+function openLiability(id) {
+  const l = (state.liabilities || []).find(x => x.id === id);
+  $("#liabilityModalTitle").textContent = l ? "Edit liability" : "Add liability";
+  $("#liability-id").value = l ? l.id : "";
+  $("#liability-name").value = l ? l.name : "";
+  $("#liability-kind").value = l ? l.kind : "mortgage";
+  $("#liability-outstanding").value = l ? l.outstanding : "";
+  $("#liability-payment").value = l && l.monthly_payment != null ? l.monthly_payment : "";
+  $("#liability-rate").value = l && l.interest_rate != null ? l.interest_rate : "";
+  $("#liability-started").value = l && l.started_on ? l.started_on : "";
+  $("#liability-note").value = l && l.note ? l.note : "";
+  $("#liability-active").checked = l ? l.is_active : true;
+  new bootstrap.Modal("#liabilityModal").show();
+}
+
+async function saveLiability(e) {
+  e.preventDefault();
+  const id = $("#liability-id").value;
+  const payload = {
+    name: $("#liability-name").value,
+    kind: $("#liability-kind").value,
+    outstanding: Number($("#liability-outstanding").value),
+    monthly_payment: $("#liability-payment").value ? Number($("#liability-payment").value) : null,
+    interest_rate: $("#liability-rate").value ? Number($("#liability-rate").value) : null,
+    started_on: $("#liability-started").value || null,
+    note: $("#liability-note").value || null,
+    is_active: $("#liability-active").checked,
+  };
+  try {
+    if (id) await api("/api/liabilities/" + id, { method: "PUT", body: JSON.stringify(payload) });
+    else await api("/api/liabilities", { method: "POST", body: JSON.stringify(payload) });
+    bootstrap.Modal.getInstance($("#liabilityModal")).hide();
+    showAlert("Liability saved");
+    loadItems();
+    loadBalanceSheet();
+  } catch (err) {
+    showAlert(escapeHtml(err.message), "danger");
+  }
+}
+
+async function deleteLiability(id) {
+  if (!confirm("Remove this liability from the balance sheet?")) return;
+  await api("/api/liabilities/" + id, { method: "DELETE" });
+  showAlert("Liability removed");
+  loadItems();
+  loadBalanceSheet();
+}
+
 // ---------- wire up ----------
 document.addEventListener("DOMContentLoaded", () => {
   $("#login-form").addEventListener("submit", async (e) => {
@@ -557,10 +961,31 @@ document.addEventListener("DOMContentLoaded", () => {
   }));
   $("#add-trx-btn").addEventListener("click", openAddTransaction);
   $("#trx-form").addEventListener("submit", saveTransaction);
+  $("#trx-type-input").addEventListener("change", syncTrxSavingsUI);
   $("#trx-filter-btn").addEventListener("click", loadTransactions);
   $("#rep-run-btn").addEventListener("click", runReport);
   $("#export-csv-btn").addEventListener("click", () => downloadFile("/api/export/csv", backupFileName("csv")));
   $("#export-xlsx-btn").addEventListener("click", () => downloadFile("/api/export/excel", backupFileName("xlsx")));
+
+  // savings
+  $("#quick-saving-btn").addEventListener("click", () => openSaving());
+  $("#add-saving-btn").addEventListener("click", () => openSaving());
+  $("#saving-form").addEventListener("submit", saveSaving);
+  $("#run-offsets-btn").addEventListener("click", runOffsets);
+
+  // financial statements
+  $$("#statement-tabs .nav-link").forEach(a => a.addEventListener("click", (e) => {
+    e.preventDefault();
+    showStatementTab(a.dataset.stmt);
+  }));
+  $$("#stmt-income [data-range]").forEach(btn => btn.addEventListener("click", () => setQuickRange(btn.dataset.range)));
+  $("#stmt-run-btn").addEventListener("click", loadIncomeStatement);
+  $("#bs-run-btn").addEventListener("click", loadBalanceSheet);
+  $("#print-statement-btn").addEventListener("click", () => window.print());
+  $("#add-asset-btn").addEventListener("click", () => openAsset());
+  $("#asset-form").addEventListener("submit", saveAsset);
+  $("#add-liability-btn").addEventListener("click", () => openLiability());
+  $("#liability-form").addEventListener("submit", saveLiability);
 
   // admin: users
   $("#add-user-btn").addEventListener("click", openAddUser);

@@ -101,6 +101,7 @@ def create_transaction(db: Session, data: schemas.TransactionCreate, user_id: Op
         amount=data.amount,
         description=data.description,
         created_by=user_id,
+        member_id=getattr(data, "member_id", None) or user_id,
     )
     db.add(trx)
     db.commit()
@@ -180,7 +181,6 @@ def dashboard_kpis(db: Session) -> dict:
     total_savings = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
         models.Transaction.type == "Savings").scalar() or 0.0
     tx_count = db.query(func.count(models.Transaction.id)).scalar() or 0
-    balance = float(total_income) - float(total_expenses)
 
     # last 12 months trend
     twelve_months_ago = date.today().replace(year=date.today().year - 1)
@@ -199,7 +199,6 @@ def dashboard_kpis(db: Session) -> dict:
         "total_income": float(total_income),
         "total_expenses": float(total_expenses),
         "total_savings": float(total_savings),
-        "balance": balance,
         "transaction_count": int(tx_count),
         "trend": trend,
     }
@@ -314,6 +313,20 @@ def replace_all_transactions(db: Session, rows, categories_meta=None,
     created = updated = 0
     cache: Dict[str, models.Category] = {}
 
+    # username / full name -> user id, so family-member attribution survives a restore
+    members: Dict[str, int] = {}
+    for u in db.query(models.User).all():
+        if u.username:
+            members[u.username.strip().casefold()] = u.id
+        if u.full_name:
+            members.setdefault(u.full_name.strip().casefold(), u.id)
+
+    def member_id_for(row) -> Optional[int]:
+        label = getattr(row, "member", None)
+        if not label:
+            return None
+        return members.get(str(label).strip().casefold())
+
     def upsert(name, type_hint=None, group=None, description=None):
         nonlocal created, updated
         cat, was_created, was_updated = get_or_create_category(
@@ -349,6 +362,8 @@ def replace_all_transactions(db: Session, rows, categories_meta=None,
                 amount=row.amount,
                 description=row.description or None,
                 created_by=user_id,
+                member_id=member_id_for(row),
+                auto_offset_month=getattr(row, "auto_offset_month", None),
             ))
         db.add_all(new_rows)
         db.commit()

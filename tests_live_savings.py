@@ -107,10 +107,12 @@ check("'balance' KPI is gone", "balance" not in dash)
 count = dash["transaction_count"]
 print(f"     transactions={count}  income={dash['total_income']:,.0f}  "
       f"expenses={dash['total_expenses']:,.0f}  savings={dash['total_savings']:,.0f}")
-check("the 44 backfilled sweep rows are present", count == 887 + 44, f"{count} (expected 931)")
+check("the 44 sweep rows and the loan row are present", count == 887 + 44 + 1,
+      f"{count} (expected 932 = 887 original + 44 sweep + 1 loan)")
 surplus = dash["total_income"] - dash["total_expenses"]
-check("total savings now equals income - expenses after the backfill",
-      close(dash["total_savings"], surplus), f"{dash['total_savings']:,.0f} vs {surplus:,.0f}")
+check("the dashboard reports the savings BALANCE, not lifetime savings",
+      close(dash["total_savings"], 526_628_193, 5) and close(dash["cash_balance"], 69_981_538, 5),
+      f"savings {dash['total_savings']:,.0f} cash {dash.get('cash_balance', 0):,.0f} surplus {surplus:,.0f}")
 
 print("\n== savings summary ==")
 s, summ = call("GET", "/api/savings/summary?months=60", token=TOK)
@@ -212,10 +214,11 @@ s, xlsx = call("GET", "/api/export/excel", token=TOK, raw=True)
 from openpyxl import load_workbook
 wb = load_workbook(io.BytesIO(xlsx))
 ws = wb["Transactions"]
-check("Excel export has 7 columns and all rows",
-      [c.value for c in ws[1]] == ["Date", "Type", "Category", "Amount", "Description", "Member", "AutoOffset"]
+check("Excel export has the 10 columns and all rows",
+      [c.value for c in ws[1]] == ["Date", "Type", "Category", "Amount", "Description", "Member",
+                                  "AutoOffset", "Direction", "Lender", "FundedBy"]
       and ws.max_row - 1 == count,
-      f"cols={[c.value for c in ws[1]]}, rows={ws.max_row - 1}")
+      f"cols={len([c.value for c in ws[1]])}, rows={ws.max_row - 1}")
 s, st = call("GET", "/api/admin/backup-status", token=TOK)
 check("weekly reminder bookkeeping intact", s == 200 and st["interval_days"] == 7, f"due={st['due']}")
 check("status reports the new app version", version_at_least(st.get("app_version"), TARGET_VERSION), str(st.get("app_version")))

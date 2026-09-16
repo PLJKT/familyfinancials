@@ -209,6 +209,27 @@ def dashboard_kpis(db: Session) -> dict:
     )
     trend = [{"month": t.month, "income": float(t.income), "expenses": float(t.expenses)} for t in trend_q]
 
+    # annual totals by calendar year (income, expenses, surplus, savings deposited)
+    year_q = (
+        db.query(func.substr(cast(models.Transaction.date, String), 1, 4).label("year"),
+                 func.coalesce(func.sum(case((models.Transaction.type == "Income", models.Transaction.amount), else_=0.0)), 0.0).label("income"),
+                 func.coalesce(func.sum(case((models.Transaction.type == "Expenses", models.Transaction.amount), else_=0.0)), 0.0).label("expenses"),
+                 func.coalesce(func.sum(case((models.Transaction.type == "Savings", models.Transaction.amount), else_=0.0)), 0.0).label("savings"))
+        .group_by("year")
+        .order_by("year")
+        .all()
+    )
+    annual = [
+        {
+            "year": int(y.year),
+            "income": float(y.income),
+            "expenses": float(y.expenses),
+            "surplus": float(y.income - y.expenses),
+            "savings": float(y.savings),  # deposited into savings that year (incl. loan-funded transfers)
+        }
+        for y in year_q
+    ]
+
     return {
         "total_income": float(total_income),
         "total_expenses": float(total_expenses),
@@ -217,6 +238,7 @@ def dashboard_kpis(db: Session) -> dict:
         "savings_this_month": float(savings_in_month),  # movement in the running month
         "transaction_count": int(tx_count),
         "trend": trend,
+        "annual": annual,
     }
 
 

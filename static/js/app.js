@@ -199,6 +199,27 @@ async function loadDashboard() {
     },
     options: { plugins: { legend: { position: "bottom" } } },
   });
+
+  // annual summary by calendar year: income, expenses, surplus, savings
+  const annual = data.annual || [];
+  if (state.annualChart) state.annualChart.destroy();
+  state.annualChart = new Chart($("#annual-chart"), {
+    type: "bar",
+    data: {
+      labels: annual.map(a => String(a.year)),
+      datasets: [
+        { label: "Income",  data: annual.map(a => a.income),   backgroundColor: "#198754" },
+        { label: "Expenses", data: annual.map(a => a.expenses), backgroundColor: "#dc3545" },
+        { label: "Surplus",  data: annual.map(a => a.surplus),  backgroundColor: "#0d6efd" },
+        { label: "Savings",  data: annual.map(a => a.savings),  backgroundColor: "#ffc107" },
+      ],
+    },
+    options: {
+      responsive: true,
+      plugins: { legend: { position: "bottom" } },
+      scales: { y: { beginAtZero: true, ticks: { callback: v => fmtMoney(v) } } },
+    },
+  });
 }
 
 // ---------- transactions ----------

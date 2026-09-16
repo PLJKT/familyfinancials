@@ -65,8 +65,10 @@ def ensure_default_accounts(db: Session) -> list:
     """Make sure a cash and a savings account exist, so every flow has a home."""
     created = []
     for name, kind in DEFAULT_ACCOUNTS:
+        # any account of this kind (active or not) means the kind already has a home;
+        # reactivating later is the operator's choice, never recreate a unique name
         exists = (db.query(models.Account)
-                  .filter(models.Account.kind == kind, models.Account.is_active.is_(True)).first())
+                  .filter(models.Account.kind == kind).first())
         if exists is None:
             db.add(models.Account(name=name, kind=kind, opening_balance=0.0))
             created.append(name)

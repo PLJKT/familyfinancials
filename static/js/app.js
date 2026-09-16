@@ -255,7 +255,8 @@ async function loadDashboard() {
         { label: "Expenses", data: data.trend.map(t => t.expenses), borderColor: "#dc3545", tension: .3 },
       ],
     },
-    options: { responsive: true, plugins: { legend: { position: "bottom" }, tooltip: moneyTooltip } },
+    options: { responsive: true, plugins: { legend: { position: "bottom" }, tooltip: moneyTooltip },
+      scales: { y: { ticks: { callback: v => fmtMoney(v) } } } },
   });
 
   if (state.totalsChart) state.totalsChart.destroy();

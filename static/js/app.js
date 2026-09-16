@@ -168,9 +168,9 @@ async function loadDashboard() {
   const cards = [
     { label: "Total income", value: fmtMoney(data.total_income), cls: "income", icon: "bi-arrow-down-circle" },
     { label: "Total expenses", value: fmtMoney(data.total_expenses), cls: "expense", icon: "bi-arrow-up-circle" },
-    { label: "Savings balance", value: fmtMoney(data.total_savings), cls: "savings", icon: "bi-piggy-bank",
-      sub: `this month ${fmtMoney(data.savings_this_month || 0)}` },
-    { label: "Cash balance", value: fmtMoney(data.cash_balance || 0), cls: "balance", icon: "bi-wallet2" },
+    { label: "Available funds (cash & savings)", value: fmtMoney((data.total_savings || 0) + (data.cash_balance || 0)),
+      cls: "savings", icon: "bi-piggy-bank",
+      sub: `savings ${fmtMoney(data.total_savings || 0)} · cash ${fmtMoney(data.cash_balance || 0)}` },
     { label: "Transactions", value: data.transaction_count, cls: "balance", icon: "bi-list-check" },
   ];
   $("#kpi-cards").innerHTML = cards.map(kpiCard).join("");

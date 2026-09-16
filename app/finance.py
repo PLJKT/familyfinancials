@@ -107,6 +107,11 @@ def account_balances(db: Session, as_of: Optional[date] = None, include_inactive
 
     query = db.query(models.Transaction.type, models.Transaction.amount,
                      models.Transaction.account_id, models.Transaction.direction)
+    # Single-account model: when no separate savings account exists, Savings /
+    # Withdrawal rows are internal cash bookkeeping and must NOT change the cash
+    # balance (cash = opening + accumulated surplus). With a savings account
+    # present they behave as transfers between cash and savings as before.
+    has_savings_acct = any(a.kind == "savings" for a in accounts)
     for ttype, amount, account_id, direction in _in_range(query, None, as_of).all():
         amount = float(amount or 0.0)
         if ttype == models.TYPE_INCOME:
@@ -114,11 +119,13 @@ def account_balances(db: Session, as_of: Optional[date] = None, include_inactive
         elif ttype == models.TYPE_EXPENSES:
             move(pick("cash", account_id), -amount)
         elif ttype == models.TYPE_SAVINGS:
-            move(pick("savings", account_id), amount)          # into savings ...
-            move(pick("cash", None), -amount)                  # ... out of cash
+            if has_savings_acct:
+                move(pick("savings", account_id), amount)          # into savings ...
+                move(pick("cash", None), -amount)                  # ... out of cash
         elif ttype == models.TYPE_WITHDRAWAL:
-            move(pick("savings", account_id), -amount)         # out of savings ...
-            move(pick("cash", None), amount)                   # ... back into cash
+            if has_savings_acct:
+                move(pick("savings", account_id), -amount)         # out of savings ...
+                move(pick("cash", None), amount)                   # ... back into cash
         elif ttype == models.TYPE_LOAN:
             move(pick("cash", account_id),
                  amount if (direction or "borrow") == "borrow" else -amount)

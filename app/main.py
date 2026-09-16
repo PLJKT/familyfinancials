@@ -2,6 +2,7 @@ import io
 import csv
 import json
 import logging
+import os
 import time
 import urllib.request
 from datetime import date, datetime, timedelta
@@ -9,6 +10,7 @@ from typing import List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status, Query, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi.responses import StreamingResponse, FileResponse
 from fastapi.staticfiles import StaticFiles
 from sqlalchemy import func
@@ -47,10 +49,41 @@ app = FastAPI(title="Family Financial Control System", version="1.4.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
+    allow_credentials=False,  # frontend is same-origin; credentials are never sent cross-origin
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+class SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Hardening headers for a financial app.
+
+    The CSP whitelists cdn.jsdelivr.net because the frontend loads Bootstrap
+    and Chart.js from there; everything else must come from the app itself.
+    """
+
+    async def dispatch(self, request, call_next):
+        response = await call_next(request)
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault("Referrer-Policy", "strict-origin-when-cross-origin")
+        response.headers.setdefault("Permissions-Policy", "camera=(), microphone=(), geolocation=()")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'self'; "
+            "script-src 'self' https://cdn.jsdelivr.net; "
+            "style-src 'self' https://cdn.jsdelivr.net 'unsafe-inline'; "
+            "font-src 'self' https://cdn.jsdelivr.net data:; "
+            "img-src 'self' data:; "
+            "connect-src 'self'; "
+            "frame-ancestors 'none'; "
+            "base-uri 'self'; "
+            "form-action 'self'",
+        )
+        return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 # Serve static frontend
 app.mount("/static", StaticFiles(directory="static"), name="static")
@@ -58,6 +91,9 @@ app.mount("/static", StaticFiles(directory="static"), name="static")
 
 @app.on_event("startup")
 def on_startup():
+    if os.getenv("SECRET_KEY", "") in ("", "change-me-in-production-please-use-env"):
+        logger.warning("SECRET_KEY is unset or still the default value - set a strong "
+                       "SECRET_KEY in production or JWT signing is insecure")
     logger.info("Starting Family Financial Control System v%s | storage=%s | %s | persistent=%s | started_at=%s",
                 app.version, BACKEND, describe_url(), not DATABASE_URL.startswith("sqlite"), STARTED_AT)
     try:

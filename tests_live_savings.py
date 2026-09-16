@@ -17,6 +17,14 @@ B = os.getenv("FF_BASE", "https://familyfinancials.onrender.com")
 PASSWORD = os.environ["FF_ADMIN_PASSWORD"]
 TARGET_VERSION = os.getenv("FF_VERSION", "1.4.0")
 
+if os.getenv("FF_CONFIRM_PRODUCTION") != "1":
+    print("\n" + "!" * 74)
+    print("!  LIVE / PRODUCTION database warning")
+    print(f"!  This script talks to the REAL database at: {B}")
+    print("!  It only touches its own temporary records, but run it with care.")
+    print("!  Set FF_CONFIRM_PRODUCTION=1 to suppress this banner.")
+    print("!" * 74 + "\n")
+
 passed = failed = 0
 
 

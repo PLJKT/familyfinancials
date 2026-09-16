@@ -20,6 +20,14 @@ PASSWORD = os.environ["FF_ADMIN_PASSWORD"]
 TARGET_VERSION = os.getenv("FF_VERSION", "1.4.0")
 APPLY = "--apply" in sys.argv
 
+if os.getenv("FF_CONFIRM_PRODUCTION") != "1":
+    print("\n" + "!" * 74)
+    print("!  LIVE / PRODUCTION database warning")
+    print(f"!  This script talks to the REAL database at: {B}")
+    print("!  It only touches its own temporary records, but run it with care.")
+    print("!  Set FF_CONFIRM_PRODUCTION=1 to suppress this banner.")
+    print("!" * 74 + "\n")
+
 OPENING_SAVINGS = 260_000_000
 LOAN = 300_000_000
 LOAN_LENDER = "Prosindo"

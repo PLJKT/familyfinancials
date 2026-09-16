@@ -21,6 +21,14 @@ ADMIN_PASSWORD = os.environ["FF_ADMIN_PASSWORD"]
 LOCAL_BACKUP = os.getenv("FF_LOCAL_BACKUP",
                          r"backups\live_20260914_203820\live_backup.xlsx")
 
+if os.getenv("FF_CONFIRM_PRODUCTION") != "1":
+    print("\n" + "!" * 74)
+    print("!  LIVE / PRODUCTION database warning")
+    print(f"!  This script talks to the REAL database at: {BASE}")
+    print("!  It only touches its own temporary records, but run it with care.")
+    print("!  Set FF_CONFIRM_PRODUCTION=1 to suppress this banner.")
+    print("!" * 74 + "\n")
+
 results = []
 passed = failed = 0
 

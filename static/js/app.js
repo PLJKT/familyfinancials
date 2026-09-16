@@ -6,10 +6,66 @@ let state = {
   categories: [],
   trendChart: null,
   totalsChart: null,
+  annualChart: null,
   reportChart: null,
   currentPage: "dashboard",
   backup: null,
+  // display currency: records are kept in IDR, this only changes how they render
+  currency: localStorage.getItem("ff_currency") || "IDR",
+  rates: null,
+  ratesFetchedAt: 0,
 };
+
+const CURRENCY_META = {
+  IDR: { symbol: "Rp", digits: 0 },
+  USD: { symbol: "$", digits: 2 },
+  CNY: { symbol: "¥", digits: 2 },
+};
+
+async function loadRates(force = false) {
+  const now = Date.now();
+  if (!force && state.rates && now - state.ratesFetchedAt < 3600000) return;
+  try {
+    const r = await api("/api/rates");
+    state.rates = r && r.rates ? r.rates : null;
+    state.ratesFetchedAt = now;
+  } catch (e) {
+    state.rates = null;
+  }
+}
+
+function convertIDR(n) {
+  const v = Number(n) || 0;
+  if (state.currency === "IDR" || !state.rates || !state.rates[state.currency]) return v;
+  return v * state.rates[state.currency];
+}
+
+function fmtMoney(n) {
+  const meta = CURRENCY_META[state.currency] || CURRENCY_META.IDR;
+  const v = convertIDR(n);
+  return meta.symbol + " " + v.toLocaleString("en-US", {
+    minimumFractionDigits: meta.digits, maximumFractionDigits: meta.digits,
+  });
+}
+
+async function setCurrency(code) {
+  if (!CURRENCY_META[code] || code === state.currency) return;
+  state.currency = code;
+  localStorage.setItem("ff_currency", code);
+  $$(".currency-btn").forEach(b => b.classList.toggle("active", b.dataset.currency === code));
+  await loadRates(true);
+  renderCurrentPage();
+}
+
+function renderCurrentPage() {
+  const page = state.currentPage;
+  if (page === "dashboard") loadDashboard();
+  else if (page === "transactions") loadTransactions();
+  else if (page === "savings") loadSavings();
+  else if (page === "statements") loadStatements();
+  else if (page === "reports") runReport();
+  else if (page === "admin") { loadUsers(); loadBackupStatus(); }
+}
 
 // ---------- helpers ----------
 function $(sel) { return document.querySelector(sel); }
@@ -55,7 +111,11 @@ async function api(path, options = {}) {
 }
 
 function fmtMoney(n) {
-  return (Number(n) || 0).toLocaleString("en-US", { maximumFractionDigits: 0 });
+  const meta = CURRENCY_META[state.currency] || CURRENCY_META.IDR;
+  const v = convertIDR(n);
+  return meta.symbol + " " + v.toLocaleString("en-US", {
+    minimumFractionDigits: meta.digits, maximumFractionDigits: meta.digits,
+  });
 }
 
 function canEdit() {
@@ -110,8 +170,14 @@ async function bootstrapApp() {
   $("#current-user").textContent = `${state.user.username} (${state.user.role})`;
   $("#nav-admin").style.display = canAdmin() ? "" : "none";
 
+  $$(".currency-btn").forEach(b => {
+    b.classList.toggle("active", b.dataset.currency === state.currency);
+    b.addEventListener("click", () => setCurrency(b.dataset.currency));
+  });
+
   state.categories = await api("/api/categories");
   fillCategorySelectors();
+  await loadRates();
   showPage("dashboard");
   if (canAdmin()) loadBackupStatus();
 }
@@ -176,6 +242,9 @@ async function loadDashboard() {
   $("#kpi-cards").innerHTML = cards.map(kpiCard).join("");
 
   const labels = data.trend.map(t => t.month);
+  const moneyTooltip = {
+    callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y ?? ctx.parsed)}` },
+  };
   if (state.trendChart) state.trendChart.destroy();
   state.trendChart = new Chart($("#trend-chart"), {
     type: "line",
@@ -186,7 +255,7 @@ async function loadDashboard() {
         { label: "Expenses", data: data.trend.map(t => t.expenses), borderColor: "#dc3545", tension: .3 },
       ],
     },
-    options: { responsive: true, plugins: { legend: { position: "bottom" } } },
+    options: { responsive: true, plugins: { legend: { position: "bottom" }, tooltip: moneyTooltip } },
   });
 
   if (state.totalsChart) state.totalsChart.destroy();
@@ -197,7 +266,7 @@ async function loadDashboard() {
       datasets: [{ data: [data.total_income, data.total_expenses, data.total_savings],
         backgroundColor: ["#198754", "#dc3545", "#0d6efd"] }],
     },
-    options: { plugins: { legend: { position: "bottom" } } },
+    options: { plugins: { legend: { position: "bottom" }, tooltip: moneyTooltip } },
   });
 
   // annual summary by calendar year: income, expenses, surplus, savings
@@ -216,7 +285,7 @@ async function loadDashboard() {
     },
     options: {
       responsive: true,
-      plugins: { legend: { position: "bottom" } },
+      plugins: { legend: { position: "bottom" }, tooltip: moneyTooltip },
       scales: { y: { beginAtZero: true, ticks: { callback: v => fmtMoney(v) } } },
     },
   });
@@ -345,7 +414,9 @@ async function runReport() {
         { label: "Savings", data: rows.map(r => r.savings), backgroundColor: "#0d6efd" },
       ],
     },
-    options: { plugins: { legend: { position: "bottom" } }, scales: { x: { stacked: false } } },
+    options: { plugins: { legend: { position: "bottom" },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtMoney(ctx.parsed.y ?? ctx.parsed)}` } } },
+      scales: { x: { stacked: false } } },
   });
 }
 

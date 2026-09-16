@@ -1,6 +1,9 @@
 import io
 import csv
+import json
 import logging
+import time
+import urllib.request
 from datetime import date, datetime, timedelta
 from typing import List, Optional
 
@@ -294,6 +297,43 @@ def report_summary(query: schemas.ReportQuery, db: Session = Depends(get_db),
 @app.get("/api/dashboard")
 def dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
     return crud.dashboard_kpis(db)
+
+
+# ---------------- Currency (FX) rates ----------------
+# Live rates come from open.er-api.com (free tier, no key). Cached for 1 hour.
+_FX_CACHE = {"ts": 0.0, "data": None}
+
+
+@app.get("/api/rates")
+def fx_rates():
+    """Rates expressed as 1 IDR = X <currency>. Public endpoint (no auth needed
+    for display purposes, consistent with the front-end reading it pre-login)."""
+    now = time.time()
+    if _FX_CACHE["data"] and now - _FX_CACHE["ts"] < 3600:
+        return _FX_CACHE["data"]
+    fallback = {"base": "IDR", "rates": {"IDR": 1.0, "USD": 0.000061, "CNY": 0.00044},
+                "updated": "", "fallback": True,
+                "note": "Estimate while the live rate service is unreachable"}
+    try:
+        req = urllib.request.Request(
+            "https://open.er-api.com/v6/latest/IDR",
+            headers={"User-Agent": "Mozilla/5.0 (family-finance)"})
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            payload = json.loads(resp.read().decode("utf-8"))
+        src = payload.get("rates") or {}
+        rates = {"IDR": 1.0}
+        for code in ("USD", "CNY"):
+            val = src.get(code)
+            if isinstance(val, (int, float)) and val > 0:
+                rates[code] = float(val)
+        data = {"base": "IDR", "rates": rates,
+                "updated": payload.get("time_last_update_utc", ""), "fallback": False}
+        _FX_CACHE["ts"], _FX_CACHE["data"] = now, data
+        return data
+    except Exception:
+        logger.warning("FX rate fetch failed; serving fallback rates")
+        _FX_CACHE["ts"], _FX_CACHE["data"] = now, fallback
+        return fallback
 
 
 # ---------------- Savings ----------------

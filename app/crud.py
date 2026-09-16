@@ -219,6 +219,17 @@ def dashboard_kpis(db: Session) -> dict:
         .order_by("year")
         .all()
     )
+    # months with any expense, per calendar year (drives the per-year monthly average)
+    ym_exp_q = (
+        db.query(func.substr(cast(models.Transaction.date, String), 1, 7).label("ym"))
+        .filter(models.Transaction.type == "Expenses")
+        .distinct().all()
+    )
+    months_per_year: dict = {}
+    for (ym,) in ym_exp_q:
+        y = int(ym[:4])
+        months_per_year[y] = months_per_year.get(y, 0) + 1
+
     annual = [
         {
             "year": int(y.year),
@@ -226,6 +237,8 @@ def dashboard_kpis(db: Session) -> dict:
             "expenses": float(y.expenses),
             "surplus": float(y.income - y.expenses),
             "savings": float(y.savings),  # deposited into savings that year (incl. loan-funded transfers)
+            "avg_monthly_expenses": (float(y.expenses) / months_per_year[int(y.year)]
+                                     if months_per_year.get(int(y.year), 0) else 0.0),
         }
         for y in year_q
     ]
@@ -241,6 +254,21 @@ def dashboard_kpis(db: Session) -> dict:
         models.Transaction.date >= _start,
         models.Transaction.date < _end).scalar() or 0.0
     avg_monthly_expenses = float(_exp_q) / 12.0
+
+    # all-time average monthly expenses over the completed months
+    # (first month with an expense .. last completed month)
+    _exp_all_q = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
+        models.Transaction.type == "Expenses",
+        models.Transaction.date < _end).scalar() or 0.0
+    _first_exp = db.query(func.min(models.Transaction.date)).filter(
+        models.Transaction.type == "Expenses").scalar()
+    if _first_exp is not None and _exp_all_q > 0:
+        _first_ym = _first_exp.year * 12 + (_first_exp.month - 1)
+        _last_ym = _y * 12 + (_m - 1) - 1
+        avg_monthly_expenses_all = float(_exp_all_q) / max(1, _last_ym - _first_ym + 1)
+    else:
+        avg_monthly_expenses_all = 0.0
+
     available_funds = float(total_savings + cash_balance)
     months_covered = (available_funds / avg_monthly_expenses) if avg_monthly_expenses > 0 else None
 
@@ -253,8 +281,9 @@ def dashboard_kpis(db: Session) -> dict:
         "transaction_count": int(tx_count),
         "trend": trend,
         "annual": annual,
-        "avg_monthly_expenses": avg_monthly_expenses,   # last 12 full calendar months
-        "months_covered": months_covered,               # available funds / avg monthly expenses
+        "avg_monthly_expenses": avg_monthly_expenses,       # last 12 full calendar months
+        "avg_monthly_expenses_all": avg_monthly_expenses_all,  # all completed months to date
+        "months_covered": months_covered,                   # available funds / avg monthly expenses
     }
 
 

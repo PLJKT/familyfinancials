@@ -236,7 +236,7 @@ async function loadDashboard() {
     { label: "Total expenses", value: fmtMoney(data.total_expenses), cls: "expense", icon: "bi-arrow-up-circle" },
     { label: "Avg monthly expenses", value: fmtMoney(data.avg_monthly_expenses || 0),
       cls: "expense", icon: "bi-calendar-range",
-      sub: "last 12 full months" },
+      sub: `last 12 full months · all time ${fmtMoney(data.avg_monthly_expenses_all || 0)}` },
     { label: "Available funds (cash & savings)", value: fmtMoney((data.total_savings || 0) + (data.cash_balance || 0)),
       cls: "savings", icon: "bi-piggy-bank",
       sub: `savings ${fmtMoney(data.total_savings || 0)} · cash ${fmtMoney(data.cash_balance || 0)}` },
@@ -288,6 +288,7 @@ async function loadDashboard() {
         { label: "Expenses", data: annual.map(a => a.expenses), backgroundColor: "#dc3545" },
         { label: "Surplus",  data: annual.map(a => a.surplus),  backgroundColor: "#0d6efd" },
         { label: "Savings",  data: annual.map(a => a.savings),  backgroundColor: "#ffc107" },
+        { label: "Avg monthly expenses", data: annual.map(a => a.avg_monthly_expenses || 0), backgroundColor: "#6f42c1" },
       ],
     },
     options: {

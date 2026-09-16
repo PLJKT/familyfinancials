@@ -234,9 +234,15 @@ async function loadDashboard() {
   const cards = [
     { label: "Total income", value: fmtMoney(data.total_income), cls: "income", icon: "bi-arrow-down-circle" },
     { label: "Total expenses", value: fmtMoney(data.total_expenses), cls: "expense", icon: "bi-arrow-up-circle" },
+    { label: "Avg monthly expenses", value: fmtMoney(data.avg_monthly_expenses || 0),
+      cls: "expense", icon: "bi-calendar-range",
+      sub: "last 12 full months" },
     { label: "Available funds (cash & savings)", value: fmtMoney((data.total_savings || 0) + (data.cash_balance || 0)),
       cls: "savings", icon: "bi-piggy-bank",
       sub: `savings ${fmtMoney(data.total_savings || 0)} · cash ${fmtMoney(data.cash_balance || 0)}` },
+    { label: "Cash & savings covers", value: data.months_covered != null ? `${Number(data.months_covered).toFixed(1)} months` : "—",
+      cls: "savings", icon: "bi-shield-check",
+      sub: data.avg_monthly_expenses ? `at avg spending of ${fmtMoney(data.avg_monthly_expenses)}/mo` : "" },
     { label: "Transactions", value: data.transaction_count, cls: "balance", icon: "bi-list-check" },
   ];
   $("#kpi-cards").innerHTML = cards.map(kpiCard).join("");
@@ -723,6 +729,8 @@ async function loadSavings() {
 
   $("#savings-table tbody").innerHTML = [...data.months].reverse().map(m => {
     const sweep = (m.sweep_in || 0) - (m.sweep_out || 0);
+    // deposits that did NOT come from the month's cash-flow surplus (income - expenses)
+    const nonCf = Math.max(0, (m.savings_in || 0) - Math.max(0, m.surplus || 0));
     return `
     <tr>
       <td class="text-nowrap">${monthLabel(m.month)} ${badge(m)}</td>
@@ -731,6 +739,7 @@ async function loadSavings() {
       <td class="text-end ${m.surplus < 0 ? "text-danger" : ""}">${fmtMoney(m.surplus)}</td>
       <td class="text-end">${fmtMoney(m.savings_in)}
         ${m.savings_in_loan ? `<div class="text-muted small">incl. loan ${fmtMoney(m.savings_in_loan)}</div>` : ""}</td>
+      <td class="text-end ${nonCf > 0 ? "text-danger fw-semibold" : "text-muted"}">${nonCf > 0 ? fmtMoney(nonCf) : "—"}</td>
       <td class="text-end ${m.withdrawal ? "text-danger" : ""}">${m.withdrawal ? fmtMoney(m.withdrawal) : "—"}</td>
       <td class="text-end text-muted">${sweep ? fmtMoney(sweep) : "—"}</td>
       <td class="text-end fw-semibold ${m.savings_net < 0 ? "text-danger" : ""}">${fmtMoney(m.savings_net)}</td>

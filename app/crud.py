@@ -230,6 +230,20 @@ def dashboard_kpis(db: Session) -> dict:
         for y in year_q
     ]
 
+    # average monthly expenses over the last 12 full calendar months, and how
+    # long the available funds would cover if spending stayed at that pace
+    _y, _m = date.today().year, date.today().month
+    _ym = _y * 12 + (_m - 1) - 12
+    _start = date(_ym // 12, (_ym % 12) + 1, 1)          # 12 months ago, 1st
+    _end = date(_y, _m, 1)                                # this month, 1st (exclusive)
+    _exp_q = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
+        models.Transaction.type == "Expenses",
+        models.Transaction.date >= _start,
+        models.Transaction.date < _end).scalar() or 0.0
+    avg_monthly_expenses = float(_exp_q) / 12.0
+    available_funds = float(total_savings + cash_balance)
+    months_covered = (available_funds / avg_monthly_expenses) if avg_monthly_expenses > 0 else None
+
     return {
         "total_income": float(total_income),
         "total_expenses": float(total_expenses),
@@ -239,6 +253,8 @@ def dashboard_kpis(db: Session) -> dict:
         "transaction_count": int(tx_count),
         "trend": trend,
         "annual": annual,
+        "avg_monthly_expenses": avg_monthly_expenses,   # last 12 full calendar months
+        "months_covered": months_covered,               # available funds / avg monthly expenses
     }
 
 

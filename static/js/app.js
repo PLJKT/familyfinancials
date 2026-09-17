@@ -289,9 +289,9 @@ async function loadDashboard() {
   const cards = [
     { label: "Total income", value: fmtMoney(data.total_income), cls: "income", icon: "bi-arrow-down-circle" },
     { label: "Total expenses", value: fmtMoney(data.total_expenses), cls: "expense", icon: "bi-arrow-up-circle" },
-    { label: "Avg monthly expenses", value: fmtMoney(data.avg_monthly_expenses || 0),
+    { label: "Avg monthly expenses", value: fmtMoney(data.avg_monthly_expenses_period ?? data.avg_monthly_expenses ?? 0),
       cls: "expense", icon: "bi-calendar-range",
-      sub: `last 12 full months · all time ${fmtMoney(data.avg_monthly_expenses_all || 0)}` },
+      sub: `selected period (${data.period_months ?? 12} months) | last 12 ${fmtMoney(data.avg_monthly_expenses || 0)} · all time ${fmtMoney(data.avg_monthly_expenses_all || 0)}` },
     { label: "Available funds (cash & savings)", value: fmtMoney((data.total_savings || 0) + (data.cash_balance || 0)),
       cls: "savings", icon: "bi-piggy-bank",
       sub: `savings ${fmtMoney(data.total_savings || 0)} · cash ${fmtMoney(data.cash_balance || 0)}` },

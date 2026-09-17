@@ -283,6 +283,25 @@ def dashboard_kpis(db: Session,
     else:
         avg_monthly_expenses_all = 0.0
 
+    # period-aware average: selected-period total expenses divided by the
+    # number of calendar months spanned by that period (annual-only years are
+    # prorated as 12 months each). No filter selected => all-time view, which
+    # spans from the first month with an expense to the current month.
+    _today = date.today()
+    if start_date and end_date:
+        _span_months = (end_date.year * 12 + end_date.month) - (start_date.year * 12 + start_date.month) + 1
+    elif start_date:
+        _span_months = (_today.year * 12 + _today.month) - (start_date.year * 12 + start_date.month) + 1
+    else:
+        if end_date and _first_exp is not None:
+            _span_months = (end_date.year * 12 + end_date.month) - (_first_exp.year * 12 + _first_exp.month) + 1
+        elif _first_exp is not None:
+            _span_months = (_today.year * 12 + _today.month) - (_first_exp.year * 12 + _first_exp.month) + 1
+        else:
+            _span_months = 1
+    _span_months = max(1, _span_months)
+    avg_monthly_expenses_period = float(total_expenses) / _span_months
+
     available_funds = float(total_savings + cash_balance)
     months_covered = (available_funds / avg_monthly_expenses) if avg_monthly_expenses > 0 else None
 
@@ -297,6 +316,8 @@ def dashboard_kpis(db: Session,
         "annual": annual,
         "avg_monthly_expenses": avg_monthly_expenses,       # last 12 full calendar months
         "avg_monthly_expenses_all": avg_monthly_expenses_all,  # all completed months to date
+        "avg_monthly_expenses_period": avg_monthly_expenses_period,  # selected period: expenses / months
+        "period_months": _span_months,                  # calendar months in selected period
         "months_covered": months_covered,                   # available funds / avg monthly expenses
     }
 

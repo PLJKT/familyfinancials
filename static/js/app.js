@@ -229,8 +229,63 @@ function monthLabel(month) {
 }
 
 // ---------- dashboard ----------
+function dashboardPeriodQuery() {
+  const preset = $("#period-preset").value;
+  if (preset === "last12") {
+    const now = new Date();
+    let y = now.getFullYear(), m = now.getMonth();
+    m -= 12;
+    if (m < 0) { m += 12; y -= 1; }
+    const from = y + "-" + String(m + 1).padStart(2, "0") + "-01";
+    const pe = new Date(now.getFullYear(), now.getMonth(), 0);
+    const to = pe.getFullYear() + "-" + String(pe.getMonth() + 1).padStart(2, "0") + "-" + String(pe.getDate()).padStart(2, "0");
+    return "start_date=" + from + "&end_date=" + to;
+  }
+  if (preset === "ytd") {
+    return "start_date=" + new Date().getFullYear() + "-01-01";
+  }
+  if (preset === "custom") {
+    const parts = [];
+    const f = $("#period-from").value, t = $("#period-to").value;
+    if (f) parts.push("start_date=" + f);
+    if (t) parts.push("end_date=" + t);
+    return parts.join("&");
+  }
+  return "";
+}
+
+function setupPeriodControls() {
+  const preset = $("#period-preset");
+  const from = $("#period-from"), to = $("#period-to"), sep = $("#period-sep");
+  const toggle = () => {
+    const show = preset.value === "custom";
+    from.classList.toggle("d-none", !show);
+    to.classList.toggle("d-none", !show);
+    sep.classList.toggle("d-none", !show);
+  };
+  preset.addEventListener("change", toggle);
+  $("#period-apply").addEventListener("click", () => loadDashboard());
+  toggle();
+}
+
+function periodHintText(qs, preset) {
+  if (preset === "last12") return "Last 12 full calendar months";
+  if (preset === "ytd") return "Year to date";
+  if (preset === "custom") {
+    const f = $("#period-from").value, t = $("#period-to").value;
+    if (f && t) return f + " → " + t;
+    if (f) return "From " + f;
+    if (t) return "Until " + t;
+    return "All time";
+  }
+  return "All time";
+}
+
 async function loadDashboard() {
-  const data = await api("/api/dashboard");
+  const qs = dashboardPeriodQuery();
+  const data = await api("/api/dashboard" + (qs ? "?" + qs : ""));
+  const hintEl = $("#period-hint");
+  if (hintEl) hintEl.textContent = periodHintText(qs, $("#period-preset").value);
   const cards = [
     { label: "Total income", value: fmtMoney(data.total_income), cls: "income", icon: "bi-arrow-down-circle" },
     { label: "Total expenses", value: fmtMoney(data.total_expenses), cls: "expense", icon: "bi-arrow-up-circle" },
@@ -1318,6 +1373,9 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#rep-run-btn").addEventListener("click", runReport);
   $("#export-csv-btn").addEventListener("click", () => downloadFile("/api/export/csv", backupFileName("csv")));
   $("#export-xlsx-btn").addEventListener("click", () => downloadFile("/api/export/excel", backupFileName("xlsx")));
+
+  // dashboard period selection
+  setupPeriodControls();
 
   // savings
   $("#quick-saving-btn").addEventListener("click", () => openSaving());

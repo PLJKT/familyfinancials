@@ -331,8 +331,9 @@ def report_summary(query: schemas.ReportQuery, db: Session = Depends(get_db),
 
 
 @app.get("/api/dashboard")
-def dashboard(db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
-    return crud.dashboard_kpis(db)
+def dashboard(start_date: Optional[date] = None, end_date: Optional[date] = None,
+              db: Session = Depends(get_db), current_user: models.User = Depends(get_current_user)):
+    return crud.dashboard_kpis(db, start_date=start_date, end_date=end_date)
 
 
 # ---------------- Currency (FX) rates ----------------

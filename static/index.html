@@ -73,9 +73,27 @@
           <h4 class="mb-0">Dashboard</h4>
           <button class="btn btn-primary btn-sm" id="quick-saving-btn"><i class="bi bi-piggy-bank"></i> Add saving</button>
         </div>
+        <div class="card mb-3">
+          <div class="card-body py-2">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+              <span class="text-muted small me-1">Period:</span>
+              <select id="period-preset" class="form-select form-select-sm" style="width:auto">
+                <option value="all">All time</option>
+                <option value="last12">Last 12 full months</option>
+                <option value="ytd">Year to date</option>
+                <option value="custom">Custom range…</option>
+              </select>
+              <input type="date" id="period-from" class="form-control form-control-sm d-none" style="width:auto" />
+              <span id="period-sep" class="d-none text-muted">→</span>
+              <input type="date" id="period-to" class="form-control form-control-sm d-none" style="width:auto" />
+              <button class="btn btn-sm btn-outline-primary" id="period-apply"><i class="bi bi-funnel"></i> Apply</button>
+              <span class="text-muted small" id="period-hint"></span>
+            </div>
+          </div>
+        </div>
         <div class="row g-3 mb-4" id="kpi-cards"></div>
         <div class="row g-3">
-          <div class="col-lg-8"><div class="card"><div class="card-body"><h6>12‑month trend</h6><canvas id="trend-chart" height="120"></canvas></div></div></div>
+          <div class="col-lg-8"><div class="card"><div class="card-body"><h6>Monthly trend</h6><canvas id="trend-chart" height="120"></canvas></div></div></div>
           <div class="col-lg-4"><div class="card"><div class="card-body"><h6>Totals</h6><canvas id="totals-chart" height="200"></canvas></div></div></div>
         </div>
         <div class="row g-3 mt-1">

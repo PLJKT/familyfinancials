@@ -178,12 +178,26 @@ def build_summary(db: Session, query: schemas.ReportQuery) -> schemas.SummaryRes
     return schemas.SummaryResponse(rows=result_rows, totals=totals)
 
 
-def dashboard_kpis(db: Session) -> dict:
-    """Return high-level KPIs used by the dashboard."""
-    total_income = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
-        models.Transaction.type == "Income").scalar() or 0.0
-    total_expenses = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
-        models.Transaction.type == "Expenses").scalar() or 0.0
+def dashboard_kpis(db: Session,
+                   start_date: Optional[date] = None,
+                   end_date: Optional[date] = None) -> dict:
+    """Return high-level KPIs used by the dashboard.
+
+    start_date / end_date optionally restrict the flow aggregates (income,
+    expenses, trend, annual, transaction count). Balance stocks (savings /
+    cash) are current-state figures and are never filtered.
+    """
+    def _flow_query(txn_type):
+        q = db.query(func.coalesce(func.sum(models.Transaction.amount), 0.0)).filter(
+            models.Transaction.type == txn_type)
+        if start_date:
+            q = q.filter(models.Transaction.date >= start_date)
+        if end_date:
+            q = q.filter(models.Transaction.date <= end_date)
+        return q
+
+    total_income = _flow_query("Income").scalar() or 0.0
+    total_expenses = _flow_query("Expenses").scalar() or 0.0
     # savings and cash come from the accounts, so withdrawals are netted off
     from . import finance as _finance
     balances = _finance.account_balances(db)
@@ -194,20 +208,26 @@ def dashboard_kpis(db: Session) -> dict:
     this_month = _finance.month_of(date.today())
     month_entry = _finance.month_totals(db).get(this_month, {})
     savings_in_month = month_entry.get("savings_net", 0.0)
-    tx_count = db.query(func.count(models.Transaction.id)).scalar() or 0
+    tx_q = db.query(func.count(models.Transaction.id))
+    if start_date:
+        tx_q = tx_q.filter(models.Transaction.date >= start_date)
+    if end_date:
+        tx_q = tx_q.filter(models.Transaction.date <= end_date)
+    tx_count = tx_q.scalar() or 0
 
-    # last 12 months trend
-    twelve_months_ago = date.today().replace(year=date.today().year - 1)
+    # monthly trend: respects the selected period; defaults to last 12 months
+    trend_from = start_date or date.today().replace(year=date.today().year - 1)
     trend_q = (
         db.query(func.substr(cast(models.Transaction.date, String), 1, 7).label("month"),
                  func.coalesce(func.sum(case((models.Transaction.type == "Income", models.Transaction.amount), else_=0.0)), 0.0).label("income"),
                  func.coalesce(func.sum(case((models.Transaction.type == "Expenses", models.Transaction.amount), else_=0.0)), 0.0).label("expenses"))
-        .filter(models.Transaction.date >= twelve_months_ago)
+        .filter(models.Transaction.date >= trend_from)
         .group_by("month")
         .order_by("month")
-        .all()
     )
-    trend = [{"month": t.month, "income": float(t.income), "expenses": float(t.expenses)} for t in trend_q]
+    if end_date:
+        trend_q = trend_q.filter(models.Transaction.date <= end_date)
+    trend = [{"month": t.month, "income": float(t.income), "expenses": float(t.expenses)} for t in trend_q.all()]
 
     # annual totals by calendar year (income, expenses, surplus, savings deposited)
     year_q = (
@@ -217,18 +237,12 @@ def dashboard_kpis(db: Session) -> dict:
                  func.coalesce(func.sum(case((models.Transaction.type == "Savings", models.Transaction.amount), else_=0.0)), 0.0).label("savings"))
         .group_by("year")
         .order_by("year")
-        .all()
     )
-    # months with any expense, per calendar year (drives the per-year monthly average)
-    ym_exp_q = (
-        db.query(func.substr(cast(models.Transaction.date, String), 1, 7).label("ym"))
-        .filter(models.Transaction.type == "Expenses")
-        .distinct().all()
-    )
-    months_per_year: dict = {}
-    for (ym,) in ym_exp_q:
-        y = int(ym[:4])
-        months_per_year[y] = months_per_year.get(y, 0) + 1
+    if start_date:
+        year_q = year_q.filter(models.Transaction.date >= start_date)
+    if end_date:
+        year_q = year_q.filter(models.Transaction.date <= end_date)
+    year_rows = year_q.all()
 
     annual = [
         {
@@ -237,10 +251,10 @@ def dashboard_kpis(db: Session) -> dict:
             "expenses": float(y.expenses),
             "surplus": float(y.income - y.expenses),
             "savings": float(y.savings),  # deposited into savings that year (incl. loan-funded transfers)
-            "avg_monthly_expenses": (float(y.expenses) / months_per_year[int(y.year)]
-                                     if months_per_year.get(int(y.year), 0) else 0.0),
+            # annual average = total expenses of that year / 12 calendar months
+            "avg_monthly_expenses": float(y.expenses) / 12.0,
         }
-        for y in year_q
+        for y in year_rows
     ]
 
     # average monthly expenses over the last 12 full calendar months, and how

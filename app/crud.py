@@ -215,8 +215,13 @@ def dashboard_kpis(db: Session,
         tx_q = tx_q.filter(models.Transaction.date <= end_date)
     tx_count = tx_q.scalar() or 0
 
-    # monthly trend: respects the selected period; defaults to last 12 months
-    trend_from = start_date or date.today().replace(year=date.today().year - 1)
+    # monthly trend: strictly follows the selected period. All time spans the
+    # first transaction month through the latest (no artificial 12-month cap).
+    if start_date:
+        trend_from = start_date
+    else:
+        _first_tx = db.query(func.min(models.Transaction.date)).scalar()
+        trend_from = _first_tx or date.today().replace(year=date.today().year - 1)
     trend_q = (
         db.query(func.substr(cast(models.Transaction.date, String), 1, 7).label("month"),
                  func.coalesce(func.sum(case((models.Transaction.type == "Income", models.Transaction.amount), else_=0.0)), 0.0).label("income"),

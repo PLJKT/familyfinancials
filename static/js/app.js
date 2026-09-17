@@ -317,7 +317,8 @@ async function loadDashboard() {
       ],
     },
     options: { responsive: true, plugins: { legend: { position: "bottom" }, tooltip: moneyTooltip },
-      scales: { y: { ticks: { callback: v => fmtMoney(v) } } } },
+      scales: { y: { ticks: { callback: v => fmtMoney(v) } },
+                x: { ticks: { autoSkip: true, maxTicksLimit: 14, maxRotation: 0 } } } },
   });
 
   if (state.totalsChart) state.totalsChart.destroy();

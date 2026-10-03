@@ -84,6 +84,33 @@ function showAlert(message, type = "success") {
   setTimeout(() => { area.innerHTML = ""; }, 6000);
 }
 
+// Promise-based confirm dialog using a Bootstrap modal. Replaces window.confirm(),
+// which some embedded/sandboxed browsers silently disable (returning false),
+// making delete buttons appear unresponsive.
+function uiConfirm(message, okText = "Delete") {
+  return new Promise(resolve => {
+    const modal = $("#confirmModal");
+    if (!modal) { resolve(false); return; }
+    $("#confirm-msg").textContent = message;
+    $("#confirm-ok").textContent = okText;
+    const bsModal = new bootstrap.Modal(modal);
+    let done = false;
+    const settle = (val) => { if (!done) { done = true; resolve(val); } };
+    const onOk = () => { settle(true); bsModal.hide(); };
+    const onCancel = () => { settle(false); bsModal.hide(); };
+    const onHidden = () => { settle(false); cleanup(); };
+    const cleanup = () => {
+      $("#confirm-ok").removeEventListener("click", onOk);
+      $("#confirm-cancel").removeEventListener("click", onCancel);
+      modal.removeEventListener("hidden.bs.modal", onHidden);
+    };
+    $("#confirm-ok").addEventListener("click", onOk);
+    $("#confirm-cancel").addEventListener("click", onCancel);
+    modal.addEventListener("hidden.bs.modal", onHidden);
+    bsModal.show();
+  });
+}
+
 function describeError(data, fallback) {
   const detail = data && data.detail;
   if (!detail) return fallback;
@@ -374,8 +401,8 @@ async function loadTransactions() {
       <td class="text-end ${t.type === "Income" ? "text-success" : "text-danger"}">${fmtMoney(t.amount)}</td>
       <td>${escapeHtml(t.description || "")}</td>
       <td class="text-end">
-        ${canEdit() ? `<button class="btn btn-sm btn-outline-secondary" onclick="editTransaction(${t.id})"><i class="bi bi-pencil"></i></button>
-        <button class="btn btn-sm btn-outline-danger" onclick="deleteTransaction(${t.id})"><i class="bi bi-trash"></i></button>` : ""}
+        ${canEdit() ? `<button class="btn btn-sm btn-outline-secondary" data-action="edit-trx" data-id="${t.id}"><i class="bi bi-pencil"></i></button>
+        <button class="btn btn-sm btn-outline-danger" data-action="del-trx" data-id="${t.id}"><i class="bi bi-trash"></i></button>` : ""}
       </td>
     </tr>`).join("");
 }
@@ -406,7 +433,14 @@ async function editTransaction(id) {
   $("#trxModalTitle").textContent = "Edit transaction";
   $("#trx-id").value = t.id;
   $("#trx-date").value = t.date;
-  $("#trx-type-input").value = t.type;
+  const typeSel = $("#trx-type-input");
+  if (!Array.from(typeSel.options).some(o => o.value === t.type)) {
+    const opt = document.createElement("option");
+    opt.value = t.type;
+    opt.textContent = t.type;
+    typeSel.appendChild(opt);
+  }
+  typeSel.value = t.type;
   $("#trx-category-input").value = t.category_id;
   $("#trx-amount").value = t.amount;
   $("#trx-description").value = t.description || "";
@@ -416,7 +450,7 @@ async function editTransaction(id) {
 }
 
 async function deleteTransaction(id) {
-  if (!confirm("Delete this transaction?")) return;
+  if (!(await uiConfirm("Delete this transaction?"))) return;
   await api("/api/transactions/" + id, { method: "DELETE" });
   showAlert("Transaction deleted");
   loadTransactions();
@@ -491,20 +525,20 @@ async function loadUsers() {
     <tr>
       <td>${u.id}</td><td>${escapeHtml(u.username)}</td><td>${escapeHtml(u.email)}</td>
       <td>
-        <select class="form-select form-select-sm" onchange="changeRole(${u.id}, this.value)" ${isMaster() ? "" : "disabled"}>
+        <select class="form-select form-select-sm" data-action="role" data-id="${u.id}" ${isMaster() ? "" : "disabled"}>
           ${["master_admin", "admin", "editor", "viewer", "downloader"].map(r =>
             `<option value="${r}" ${u.role === r ? "selected" : ""}>${r}</option>`).join("")}
         </select>
       </td>
-      <td><input type="checkbox" ${u.is_approved ? "checked" : ""} onchange="changeField(${u.id}, 'is_approved', this.checked)"></td>
-      <td><input type="checkbox" ${u.is_active ? "checked" : ""} onchange="changeField(${u.id}, 'is_active', this.checked)"></td>
+      <td><input type="checkbox" ${u.is_approved ? "checked" : ""} data-action="approve" data-id="${u.id}"></td>
+      <td><input type="checkbox" ${u.is_active ? "checked" : ""} data-action="active" data-id="${u.id}"></td>
       <td class="text-nowrap">
-        <button class="btn btn-sm btn-outline-primary" onclick="enableUser(${u.id})">Enable</button>
-        <button class="btn btn-sm btn-outline-secondary" onclick="openPasswordReset(${u.id}, '${escapeHtml(u.username)}')">
+        <button class="btn btn-sm btn-outline-primary" data-action="enable-user" data-id="${u.id}">Enable</button>
+        <button class="btn btn-sm btn-outline-secondary" data-action="reset-pwd" data-id="${u.id}" data-name="${escapeHtml(u.username)}">
           <i class="bi bi-key"></i> Password
         </button>
         ${isMaster() && u.role !== "master_admin" && u.id !== state.user.id ? `
-          <button class="btn btn-sm btn-outline-danger" onclick="deleteUser(${u.id}, '${escapeHtml(u.username)}')">
+          <button class="btn btn-sm btn-outline-danger" data-action="del-user" data-id="${u.id}" data-name="${escapeHtml(u.username)}">
             <i class="bi bi-trash"></i>
           </button>` : ""}
       </td>
@@ -512,7 +546,7 @@ async function loadUsers() {
 }
 
 async function deleteUser(id, username) {
-  if (!confirm(`Delete the account "${username}"? The person will no longer be able to sign in. This cannot be undone.`)) return;
+  if (!(await uiConfirm(`Delete the account "${username}"? The person will no longer be able to sign in. This cannot be undone.`))) return;
   try {
     await api("/api/users/" + id, { method: "DELETE" });
     showAlert("Account deleted");
@@ -652,7 +686,7 @@ function renderBackupBanner(s) {
         <strong>Weekly backup reminder.</strong> ${detail}
         Download the Excel backup and keep it somewhere safe — it can be used to restore all data.
       </div>
-      <button class="btn btn-sm btn-warning" onclick="downloadBackupNow()">
+      <button class="btn btn-sm btn-warning" data-action="dl-backup">
         <i class="bi bi-file-earmark-excel"></i> Download Excel backup
       </button>
     </div>`;
@@ -802,7 +836,7 @@ async function loadSavings() {
       <td class="text-end fw-semibold ${m.savings_net < 0 ? "text-danger" : ""}">${fmtMoney(m.savings_net)}</td>
       <td class="text-end">${fmtMoney(m.balance)}</td>
       <td class="text-end text-nowrap">
-        ${canEdit() ? `<button class="btn btn-sm btn-outline-primary" onclick="openSaving('${m.month}')">Add</button>` : ""}
+        ${canEdit() ? `<button class="btn btn-sm btn-outline-primary" data-action="add-saving" data-month="${m.month}">Add</button>` : ""}
       </td>
     </tr>`;
   }).join("");
@@ -1054,8 +1088,8 @@ async function loadAccountsBook() {
       <td class="text-end">${fmtMoney(a.movements_out)}</td>
       <td class="text-end fw-semibold">${fmtMoney(a.balance)}</td>
       <td class="text-end text-nowrap">${editable ? `
-        <button class="btn btn-sm btn-outline-secondary" onclick="openAccount(${a.id})">Edit</button>
-        <button class="btn btn-sm btn-outline-danger" onclick="deleteAccount(${a.id})">Delete</button>` : ""}</td>
+        <button class="btn btn-sm btn-outline-secondary" data-action="edit-account" data-id="${a.id}">Edit</button>
+        <button class="btn btn-sm btn-outline-danger" data-action="del-account" data-id="${a.id}">Delete</button>` : ""}</td>
     </tr>`).join("") || '<tr><td colspan="8" class="text-muted">No accounts yet.</td></tr>';
 
   $("#loan-table tbody").innerHTML = loans.map(l => `
@@ -1071,16 +1105,16 @@ async function loadAccountsBook() {
     <tr><td>${escapeHtml(a.name)}</td><td class="text-capitalize">${escapeHtml(a.kind)}</td>
       <td class="text-end">${fmtMoney(a.value)}</td>
       <td class="text-end text-nowrap">${editable ? `
-        <button class="btn btn-sm btn-outline-secondary" onclick="openAsset(${a.id})">Edit</button>
-        <button class="btn btn-sm btn-outline-danger" onclick="deleteAsset(${a.id})">Delete</button>` : ""}</td>
+        <button class="btn btn-sm btn-outline-secondary" data-action="edit-asset" data-id="${a.id}">Edit</button>
+        <button class="btn btn-sm btn-outline-danger" data-action="del-asset" data-id="${a.id}">Delete</button>` : ""}</td>
     </tr>`).join("") : '<tr><td colspan="4" class="text-muted">No assets recorded yet.</td></tr>';
 
   $("#liability-table tbody").innerHTML = liabilities.length ? liabilities.map(l => `
     <tr><td>${escapeHtml(l.name)}</td><td class="text-capitalize">${escapeHtml(l.kind)}</td>
       <td class="text-end">${fmtMoney(l.outstanding)}</td>
       <td class="text-end text-nowrap">${editable ? `
-        <button class="btn btn-sm btn-outline-secondary" onclick="openLiability(${l.id})">Edit</button>
-        <button class="btn btn-sm btn-outline-danger" onclick="deleteLiability(${l.id})">Delete</button>` : ""}</td>
+        <button class="btn btn-sm btn-outline-secondary" data-action="edit-liab" data-id="${l.id}">Edit</button>
+        <button class="btn btn-sm btn-outline-danger" data-action="del-liab" data-id="${l.id}">Delete</button>` : ""}</td>
     </tr>`).join("") : '<tr><td colspan="4" class="text-muted">No liabilities recorded yet.</td></tr>';
 
   fillAccountSelects(accounts);
@@ -1174,7 +1208,7 @@ async function saveAccount(e) {
 }
 
 async function deleteAccount(id) {
-  if (!confirm("Remove this account? Only possible when nothing uses it.")) return;
+  if (!(await uiConfirm("Remove this account? Only possible when nothing uses it.", "Remove"))) return;
   try {
     await api("/api/accounts/" + id, { method: "DELETE" });
     state.accounts = null;
@@ -1300,7 +1334,7 @@ async function saveAsset(e) {
 }
 
 async function deleteAsset(id) {
-  if (!confirm("Remove this asset from the balance sheet?")) return;
+  if (!(await uiConfirm("Remove this asset from the balance sheet?", "Remove"))) return;
   await api("/api/assets/" + id, { method: "DELETE" });
   showAlert("Asset removed");
   loadItems();
@@ -1348,7 +1382,7 @@ async function saveLiability(e) {
 }
 
 async function deleteLiability(id) {
-  if (!confirm("Remove this liability from the balance sheet?")) return;
+  if (!(await uiConfirm("Remove this liability from the balance sheet?", "Remove"))) return;
   await api("/api/liabilities/" + id, { method: "DELETE" });
   showAlert("Liability removed");
   loadItems();
@@ -1356,6 +1390,43 @@ async function deleteLiability(id) {
 }
 
 // ---------- wire up ----------
+// Global event delegation for dynamically-rendered action buttons.
+// Inline onclick/onchange attributes are blocked by the app's CSP
+// (script-src 'self' without 'unsafe-inline'), so all dynamic actions
+// are wired here via data-action attributes.
+document.addEventListener("click", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const act = el.dataset.action;
+  const id = Number(el.dataset.id || 0);
+  const name = el.dataset.name || "";
+  const month = el.dataset.month || "";
+  if (act === "edit-trx") { editTransaction(id); }
+  else if (act === "del-trx") { deleteTransaction(id); }
+  else if (act === "enable-user") { enableUser(id); }
+  else if (act === "reset-pwd") { openPasswordReset(id, name); }
+  else if (act === "del-user") { deleteUser(id, name); }
+  else if (act === "dl-backup") { downloadBackupNow(); }
+  else if (act === "add-saving") { openSaving(month); }
+  else if (act === "edit-account") { openAccount(id); }
+  else if (act === "del-account") { deleteAccount(id); }
+  else if (act === "edit-asset") { openAsset(id); }
+  else if (act === "del-asset") { deleteAsset(id); }
+  else if (act === "edit-liab") { openLiability(id); }
+  else if (act === "del-liab") { deleteLiability(id); }
+});
+
+// Change delegation for selects/checkboxes rendered dynamically (users table).
+document.addEventListener("change", (e) => {
+  const el = e.target.closest("[data-action]");
+  if (!el) return;
+  const act = el.dataset.action;
+  const id = Number(el.dataset.id || 0);
+  if (act === "role") { changeRole(id, el.value); }
+  else if (act === "approve") { changeField(id, "is_approved", el.checked); }
+  else if (act === "active") { changeField(id, "is_active", el.checked); }
+});
+
 document.addEventListener("DOMContentLoaded", () => {
   $("#login-form").addEventListener("submit", async (e) => {
     e.preventDefault();

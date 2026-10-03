@@ -2,6 +2,11 @@ from datetime import date, datetime
 from typing import Optional, List
 from pydantic import BaseModel, EmailStr, Field
 
+# Alias so the field name `date` does not shadow the type name in class bodies.
+# (A class attribute named `date` with a None default makes the annotation
+#  `Optional[date]` resolve to NoneType, breaking Pydantic validation.)
+_Date = date
+
 
 # ---------- Auth / Users ----------
 class UserBase(BaseModel):
@@ -76,7 +81,7 @@ class CategoryOut(CategoryBase):
 
 # ---------- Transactions ----------
 class TransactionBase(BaseModel):
-    date: date
+    date: _Date
     type: str
     category_id: int
     amount: float
@@ -93,7 +98,7 @@ class TransactionCreate(TransactionBase):
 
 
 class TransactionUpdate(BaseModel):
-    date: Optional[date] = None
+    date: Optional[_Date] = None
     type: Optional[str] = None
     category_id: Optional[int] = None
     amount: Optional[float] = None

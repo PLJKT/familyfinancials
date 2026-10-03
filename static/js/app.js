@@ -777,7 +777,7 @@ async function ensureMembers() {
   return state.members;
 }
 
-function fillMemberSelects(members) {
+function fillMemberSelects(members = state.members || []) {
   const opts = members.map(m => `<option value="${m.id}">${escapeHtml(m.name)}</option>`).join("");
   ["#sv-member", "#trx-member"].forEach(sel => {
     const el = $(sel);

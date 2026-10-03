@@ -848,7 +848,18 @@ async function loadLifeAllocation() {
     options: {
       indexAxis: "y", responsive: true,
       plugins: { legend: { position: "bottom" },
-        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtMoney(ctx.parsed.x ?? ctx.parsed)}` } } },
+        tooltip: { callbacks: {
+          label: ctx => {
+            const i = ctx.dataIndex;
+            const v = ctx.parsed.x ?? ctx.parsed;
+            const isActual = ctx.datasetIndex === 1;
+            const pct = targets[i] > 0 ? Math.round((actuals[i] / targets[i]) * 100) : 0;
+            const pctTxt = isActual
+              ? ` · ${pct}% of target`
+              : (actuals[i] > 0 ? ` · actual ${Math.round((actuals[i] / targets[i]) * 100)}%` : "");
+            return ` ${ctx.dataset.label}: ${fmtMoney(v)}${pctTxt}`;
+          }
+        } } },
       scales: { x: { beginAtZero: true, ticks: { callback: v => fmtMoney(v) } } },
     },
   });
@@ -867,16 +878,55 @@ async function loadLifeAllocation() {
       <td class="text-end">${fmtMoney(actuals[i])}</td>
       <td class="text-end">${status}</td></tr>`;
   }).join("");
-  $("#life-gap").innerHTML = `
+
+  // ---- re-location suggestion when a bucket exceeds its target ----
+  const overIdx = gaps.map((g, i) => ({ g, i })).filter(x => x.g < 0);
+  let relocHtml = "";
+  if (overIdx.length > 0) {
+    const underList = gaps.map((g, i) => ({ g, i })).filter(x => x.g > 0);
+    const totalOver = overIdx.reduce((s, x) => s + (-x.g), 0);
+    const sugg = [];
+    if (underList.length > 0) {
+      for (const u of underList) {
+        const share = Math.min(u.g, totalOver * (u.g / underList.reduce((s, x) => s + x.g, 0)));
+        if (share > 0) sugg.push(`${fmtMoney(Math.round(share))} → ${names[u.i]}`);
+      }
+    }
+    sugg.push(`${fmtMoney(Math.round(totalOver * 0.10))} → keep as top-up buffer`);
+    relocHtml = `
+      <div class="alert alert-warning py-2 small mb-3">
+        <i class="bi bi-arrow-left-right me-1"></i><strong>Re-allocation suggestion:</strong>
+        ${overIdx.map(x => `${names[x.i]} is over its target by ${fmtMoney(-x.g)}`).join("; ")}.
+        Consider moving the overflow to under-funded buckets
+        (suggested split: ${sugg.join(", ")}).
+      </div>`;
+  }
+
+  $("#life-gap").innerHTML = relocHtml + `
     <table class="table table-sm mb-3">
       <thead><tr><th>Account</th><th class="text-end">Target</th><th class="text-end">Actual</th><th class="text-end">Gap</th></tr></thead>
       <tbody>${gapRows}</tbody>
     </table>
-    <div class="small text-muted">
+    <div class="small text-muted mb-3">
       <i class="bi bi-info-circle me-1"></i>Insurance is recorded as a premium expense, not an asset —
       its protection value is not captured in the balance. Premiums in the last 12 months:
       <strong>${fmtMoney(ins12)}</strong> (${fmtMoney(ins12 / 12)}/mo avg). All savings sit in one
       un-split pool; the emergency share is not carved out, so "long-term wealth" here is overstated.
+    </div>
+    <div class="small text-muted">
+      <i class="bi bi-journal-code me-1"></i><strong>Methodology &amp; formulas</strong>
+      <ul class="mb-0 mt-1 ps-3">
+        <li><strong>Total assets</strong> = cash balance + savings balance (from current account records): ${fmtMoney(totalAssets)}.</li>
+        <li><strong>Target</strong> per bucket = total assets × S&amp;P share (10% / 20% / 30% / 40%): e.g. growth = ${fmtMoney(totalAssets)} × 30% = ${fmtMoney(targets[2])}.</li>
+        <li><strong>Actual</strong> per bucket = current recorded amount:
+          spending/emergency = cash on hand (${fmtMoney(actuals[0])});
+          protection = insurance asset value, not recorded → 0 (premiums are expenses);
+          growth = investment assets, not recorded → 0;
+          long-term wealth = savings pool (${fmtMoney(actuals[3])}) — includes the un-carved emergency share.</li>
+        <li><strong>Gap</strong> = target − actual (positive = under-funded, negative = over-funded).</li>
+        <li><strong>Avg monthly expenses / surplus</strong> = (income − expenses) over the last 12 full months (${from} → ${to}) ÷ 12.</li>
+        <li><strong>Emergency runway</strong> = total assets ÷ avg monthly expenses; target = 6 months.</li>
+      </ul>
     </div>`;
 
   // ---- path to target without cutting lifestyle ----
@@ -906,6 +956,11 @@ async function loadLifeAllocation() {
   }
   const investShort = Math.max(0, targets[2] - actuals[2]);
   const longShort = Math.max(0, targets[3] - Math.max(0, dash.total_savings - emergencyNow));
+  const overNames = gaps.map((g, i) => ({ g, i })).filter(x => x.g < 0).map(x => names[x.i]);
+  const overTxt = overNames.length
+    ? ` Meanwhile <strong>${overNames.join(" & ")}</strong> holds more than its target — the overflow there can be
+      re-located into the under-funded buckets instead of waiting for new surplus.`
+    : "";
   if (investShort > 0 || longShort > 0) {
     rows.push(`
       <div class="d-flex align-items-start mb-2">
@@ -915,7 +970,7 @@ async function loadLifeAllocation() {
         <span class="text-danger">${fmtMoney(investShort)} under</span>);
         long-term wealth target <strong>${fmtMoney(targets[3])}</strong> after carving out the emergency share.
         Suggested split of future surplus: <strong>30% growth / 40% long-term / 20% top-up protection / 10% buffer</strong> —
-        the S&amp;P ratios. Re-balance quarterly by moving overflow savings into the under-funded accounts.</div>
+        the S&amp;P ratios. Re-balance quarterly by moving overflow savings into the under-funded accounts.${overTxt}</div>
       </div>`);
   }
   rows.push(`

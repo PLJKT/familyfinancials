@@ -64,6 +64,7 @@ function renderCurrentPage() {
   else if (page === "savings") loadSavings();
   else if (page === "statements") loadStatements();
   else if (page === "reports") runReport();
+  else if (page === "life") loadLifeAllocation();
   else if (page === "admin") { loadUsers(); loadBackupStatus(); }
 }
 
@@ -228,6 +229,7 @@ function showPage(page) {
   if (page === "savings") loadSavings();
   if (page === "statements") loadStatements();
   if (page === "reports") runReport();
+  if (page === "life") loadLifeAllocation();
   if (page === "admin") { loadUsers(); loadBackupStatus(); }
 }
 
@@ -763,6 +765,168 @@ async function runImport() {
     btn.disabled = false;
     updateImportButtonState();
   }
+}
+
+// ---------- life allocation (Standard & Poor's 10/20/30/40) ----------
+async function loadLifeAllocation() {
+  const [dash, tx] = await Promise.all([
+    api("/api/dashboard"),
+    api("/api/transactions?limit=100000"),
+  ]);
+  const list = Array.isArray(tx) ? tx : (tx.transactions || []);
+
+  // ---- reference window: last 12 full months (ending previous month) ----
+  const now = new Date();
+  const end = new Date(now.getFullYear(), now.getMonth(), 0);       // last day of previous month
+  const start = new Date(end.getFullYear(), end.getMonth() - 11, 1); // 12 months back
+  const s = d => d.toISOString().slice(0, 10);
+  const from = s(start), to = s(end);
+  const isIncome = t => t.type === "Income";
+  const isExpense = t => t.type === "Expenses";
+  const inWindow = t => t.date >= from && t.date <= to;
+
+  let inc12 = 0, exp12 = 0, ins12 = 0;
+  for (const t of list) {
+    if (!inWindow(t)) continue;
+    const amt = Number(t.amount) || 0;
+    if (isIncome(t)) inc12 += amt;
+    else if (isExpense(t)) {
+      exp12 += amt;
+      if (t.category && t.category.name === "Insurance") ins12 += amt;
+    }
+  }
+  const avgExp12 = exp12 / 12;
+  const avgInc12 = inc12 / 12;
+  const surplus12 = (inc12 - exp12) / 12;   // monthly average surplus
+
+  // ---- total assets (current records) ----
+  const totalAssets = (dash.total_savings || 0) + (dash.cash_balance || 0);
+
+  // ---- S&P targets (10/20/30/40 of total assets) ----
+  const pct = [0.10, 0.20, 0.30, 0.40];
+  const names = ["Spending & emergency", "Protection (insurance)", "Growth (investments)", "Long-term wealth"];
+  const icons = ["bi-cash-coin", "bi-shield-check", "bi-graph-up-arrow", "bi-bank"];
+  const colors = ["#198754", "#dc3545", "#0d6efd", "#ffc107"];
+  const targets = pct.map(p => totalAssets * p);
+
+  // ---- actual allocation from current records ----
+  const actuals = [
+    dash.cash_balance || 0,              // cash on hand / checking
+    0,                                   // insurance asset value (not recorded; premiums are expenses)
+    0,                                   // investment assets (assets API: none recorded)
+    dash.total_savings || 0,             // savings account balance (whole pool; includes emergency)
+  ];
+  const gaps = targets.map((tg, i) => tg - actuals[i]);
+
+  // ---- KPI cards ----
+  const kpis = [
+    { label: "Total assets (cash & savings)", value: fmtMoney(totalAssets),
+      cls: "balance", icon: "bi-piggy-bank",
+      sub: `savings ${fmtMoney(dash.total_savings || 0)} · cash ${fmtMoney(dash.cash_balance || 0)}` },
+    { label: "Avg monthly expenses (last 12 mo)", value: fmtMoney(avgExp12),
+      cls: "expense", icon: "bi-calendar-range" },
+    { label: "Avg monthly surplus (last 12 mo)", value: fmtMoney(surplus12),
+      cls: surplus12 >= 0 ? "income" : "expense", icon: "bi-wallet2",
+      sub: `income ${fmtMoney(avgInc12)} − expenses ${fmtMoney(avgExp12)}` },
+    { label: "Emergency runway", value: avgExp12 > 0 ? `${(totalAssets / avgExp12).toFixed(1)} months` : "—",
+      cls: totalAssets / avgExp12 >= 6 ? "income" : "expense", icon: "bi-shield-exclamation",
+      sub: `target 6 months = ${fmtMoney(avgExp12 * 6)}` },
+  ];
+  $("#life-kpis").innerHTML = kpis.map(kpiCard).join("");
+
+  // ---- chart: actual vs target (horizontal bars) ----
+  if (state.lifeChart) state.lifeChart.destroy();
+  state.lifeChart = new Chart($("#life-chart"), {
+    type: "bar",
+    data: {
+      labels: names,
+      datasets: [
+        { label: "Target (S&P 10/20/30/40)", data: targets, backgroundColor: "rgba(13,110,253,.55)" },
+        { label: "Actual (current records)", data: actuals, backgroundColor: "rgba(108,117,125,.75)" },
+      ],
+    },
+    options: {
+      indexAxis: "y", responsive: true,
+      plugins: { legend: { position: "bottom" },
+        tooltip: { callbacks: { label: ctx => ` ${ctx.dataset.label}: ${fmtMoney(ctx.parsed.x ?? ctx.parsed)}` } } },
+      scales: { x: { beginAtZero: true, ticks: { callback: v => fmtMoney(v) } } },
+    },
+  });
+
+  // ---- gap table ----
+  const gapRows = names.map((n, i) => {
+    const gap = gaps[i];
+    const status = gap > 0
+      ? `<span class="text-danger">under by ${fmtMoney(gap)}</span>`
+      : gap < 0
+        ? `<span class="text-success">over by ${fmtMoney(-gap)}</span>`
+        : `<span class="text-muted">on target</span>`;
+    return `<tr>
+      <td><i class="bi ${icons[i]} me-1 text-muted"></i>${n}</td>
+      <td class="text-end">${fmtMoney(targets[i])} (${pct[i] * 100}%)</td>
+      <td class="text-end">${fmtMoney(actuals[i])}</td>
+      <td class="text-end">${status}</td></tr>`;
+  }).join("");
+  $("#life-gap").innerHTML = `
+    <table class="table table-sm mb-3">
+      <thead><tr><th>Account</th><th class="text-end">Target</th><th class="text-end">Actual</th><th class="text-end">Gap</th></tr></thead>
+      <tbody>${gapRows}</tbody>
+    </table>
+    <div class="small text-muted">
+      <i class="bi bi-info-circle me-1"></i>Insurance is recorded as a premium expense, not an asset —
+      its protection value is not captured in the balance. Premiums in the last 12 months:
+      <strong>${fmtMoney(ins12)}</strong> (${fmtMoney(ins12 / 12)}/mo avg). All savings sit in one
+      un-split pool; the emergency share is not carved out, so "long-term wealth" here is overstated.
+    </div>`;
+
+  // ---- path to target without cutting lifestyle ----
+  const emergencyTarget = avgExp12 * 6;                 // 6 months of living costs
+  const emergencyNow = Math.min(totalAssets, emergencyTarget);
+  const emergencyShort = Math.max(0, emergencyTarget - totalAssets);
+  const rows = [];
+  if (emergencyShort > 0) {
+    rows.push(`
+      <div class="d-flex align-items-start mb-2">
+        <span class="badge bg-danger me-2 mt-1">1</span>
+        <div><strong>Build the emergency fund first — this is the biggest gap.</strong><br>
+        Standard &amp; Poor's says the spending account should hold <em>3–6 months of living costs</em>.
+        Yours (${(totalAssets / avgExp12).toFixed(1)} months) is below the 6-month safety line of
+        <strong>${fmtMoney(emergencyTarget)}</strong>, so the entire pool is really an emergency fund today.
+        <span class="text-danger">Shortfall: ${fmtMoney(emergencyShort)}</span>
+        at ${fmtMoney(Math.max(0, surplus12))}/month surplus →
+        <strong>${Math.max(0, surplus12) > 0 ? Math.ceil(emergencyShort / Math.max(1, surplus12)) : "—" } months</strong>
+        of unchanged living. No lifestyle cut needed; just direct the surplus here first.</div>
+      </div>`);
+  } else {
+    rows.push(`
+      <div class="d-flex align-items-start mb-2">
+        <span class="badge bg-success me-2 mt-1">1</span>
+        <div><strong>Emergency fund is adequate.</strong> (${(totalAssets / avgExp12).toFixed(1)} months ≥ 6 months)</div>
+      </div>`);
+  }
+  const investShort = Math.max(0, targets[2] - actuals[2]);
+  const longShort = Math.max(0, targets[3] - Math.max(0, dash.total_savings - emergencyNow));
+  if (investShort > 0 || longShort > 0) {
+    rows.push(`
+      <div class="d-flex align-items-start mb-2">
+        <span class="badge bg-primary me-2 mt-1">2</span>
+        <div><strong>After the emergency line is met, split new surplus into growth and long-term wealth.</strong><br>
+        Growth investments target <strong>${fmtMoney(targets[2])}</strong> (currently ${fmtMoney(actuals[2])},
+        <span class="text-danger">${fmtMoney(investShort)} under</span>);
+        long-term wealth target <strong>${fmtMoney(targets[3])}</strong> after carving out the emergency share.
+        Suggested split of future surplus: <strong>30% growth / 40% long-term / 20% top-up protection / 10% buffer</strong> —
+        the S&amp;P ratios. Re-balance quarterly by moving overflow savings into the under-funded accounts.</div>
+      </div>`);
+  }
+  rows.push(`
+    <div class="d-flex align-items-start">
+      <span class="badge bg-secondary me-2 mt-1">3</span>
+      <div><strong>Rule of thumb going forward: income − savings = spending.</strong><br>
+      Auto-transfer the savings/investment slice on payday (e.g. right after Salary lands), then live on the rest.
+      Protection is already budgeted (${fmtMoney(ins12)}/yr of premiums); review coverage yearly and keep it
+      funded before discretionary spending. Review this page monthly — the ratios update automatically.</div>
+    </div>`);
+  $("#life-path").innerHTML = rows.join("");
 }
 
 // ---------- savings ----------

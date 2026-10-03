@@ -138,14 +138,6 @@ async function api(path, options = {}) {
   return data;
 }
 
-function fmtMoney(n) {
-  const meta = CURRENCY_META[state.currency] || CURRENCY_META.IDR;
-  const v = convertIDR(n);
-  return meta.symbol + " " + v.toLocaleString("en-US", {
-    minimumFractionDigits: meta.digits, maximumFractionDigits: meta.digits,
-  });
-}
-
 function canEdit() {
   return state.user && ["master_admin", "admin", "editor"].includes(state.user.role);
 }
@@ -806,7 +798,6 @@ async function loadLifeAllocation() {
   const pct = [0.10, 0.20, 0.30, 0.40];
   const names = ["Spending & emergency", "Protection (insurance)", "Growth (investments)", "Long-term wealth"];
   const icons = ["bi-cash-coin", "bi-shield-check", "bi-graph-up-arrow", "bi-bank"];
-  const colors = ["#198754", "#dc3545", "#0d6efd", "#ffc107"];
   const targets = pct.map(p => totalAssets * p);
 
   // ---- actual allocation from current records ----

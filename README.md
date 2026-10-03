@@ -11,6 +11,9 @@ It ships with the existing **887 transactions** from the revised Excel workbook 
 - **Financial statements** — income statement and balance sheet (assets, liabilities, net worth)
 - Automatic financial reports grouped by month, year, or category
 - Dashboard with KPIs and charts (income, expenses, savings, transactions)
+- **Allocation page** — Standard & Poor's family asset quadrant (10/20/30/40): actual vs target
+  allocation, gap analysis, methodology notes and a step-by-step path to reach the targets without
+  cutting today's living standard
 - CSV / Excel backup download (restricted to downloadable roles)
 - **Weekly backup reminder** for admins
 - **Restore from a backup file** — upload the downloaded Excel and replace all data (accident recovery)
@@ -260,7 +263,46 @@ On first startup the app seeds these automatically if the database is empty.
 
 ---
 
-## 8. API overview
+## 8. Allocation page (Standard & Poor's family asset quadrant)
+
+The **Allocation** tab compares the family's current holdings against the classic four‑bucket
+allocation (10 % spending/emergency, 20 % protection, 30 % growth, 40 % long‑term wealth).
+
+- **Total assets** = cash balance + savings balance (from current account records).
+- **Target** per bucket = total assets × S&P share.
+- **Actual** per bucket comes from current records: cash on hand → spending/emergency;
+  insurance asset value and investment assets are *not recorded* (shown as 0 — premiums are
+  expenses); the savings pool → long‑term wealth (which therefore includes the un‑carved
+  emergency share; the page says so explicitly).
+- **Gap** = target − actual (positive = under‑funded, negative = over‑funded).
+- **Avg monthly expenses / surplus** = income − expenses over the last 12 full months ÷ 12.
+- **Emergency runway** = total assets ÷ avg monthly expenses; target = 6 months.
+
+The page is **computed entirely in the front‑end** (`loadLifeAllocation()` in `static/js/app.js`)
+from `/api/dashboard` + `/api/transactions` — there is no dedicated backend endpoint, so the
+methodology note (displayed under the gap table) doubles as the spec for how every number is derived.
+A re‑allocation alert appears when a bucket exceeds its target, splitting the overflow across the
+under‑funded buckets (plus a 10 % buffer) instead of waiting for new surplus.
+
+---
+
+## 9. Front-end conventions
+
+- **Cache busting**: every change to `static/js/app.js` must bump the version query in
+  `static/index.html` (`<script src="/static/js/app.js?v=N">`). Render serves the file without
+  cache headers, so an old version can linger in the browser for a long time.
+- **CSP‑safe event handling**: the app sets a strict Content‑Security‑Policy header
+  (`script-src 'self' https://cdn.jsdelivr.net` — no `'unsafe-inline'`). That kills inline
+  `onclick=` attributes, so all dynamic rows use `data-action` attributes + a document‑level
+  click/change delegate. **Do not reintroduce inline event handlers.**
+- **Confirm dialogs**: `window.confirm()` is silently disabled in some embedded browsers; use the
+  `uiConfirm()` Bootstrap‑modal helper for anything destructive.
+- **Currency display**: the page converts IDR amounts to USD/CNY on the fly using `open.er-api.com`
+  rates (cached); `fmtMoney()` is the single formatting helper (defined once — do not redefine).
+
+---
+
+## 10. API overview
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -302,7 +344,7 @@ Interactive docs: `/docs` (Swagger UI).
 
 ---
 
-## 9. Security notes
+## 11. Security notes
 
 - Passwords are hashed with **bcrypt** via `passlib`.
 - JWTs are signed with `SECRET_KEY` — **always** set a strong value in production.
@@ -314,7 +356,7 @@ Interactive docs: `/docs` (Swagger UI).
 
 ---
 
-## 10. Project structure
+## 12. Project structure
 
 ```
 familyfinancials/
@@ -340,7 +382,10 @@ familyfinancials/
 ├── tests_statements.py       # end‑to‑end test of savings, sweep, statements
 ├── tests_accounts_model.py   # accounts, opening balances, transfers, loans, migration
 ├── run_suites.sh             # runs every suite against its own fresh database
-├── tests_live_full.py        # full check of a deployed instance
+├── tests_live_accounts.py    # live‑deployment check: accounts & role guards
+├── tests_live_savings.py     # live‑deployment check: savings & sweep
+├── tests_live_full.py        # full check of a deployed instance (opt‑in, production‑safe)
+├── persistence_check.py      # verifies data survives a Render spin‑down (Neon check)
 ├── Dockerfile
 ├── render.yaml
 ├── requirements.txt
@@ -349,14 +394,28 @@ familyfinancials/
 
 ---
 
-## 11. Running the tests
+## 13. Running the tests
 
 ```bash
-# start the app against a scratch database
+# 1) local end‑to‑end suites (each against its own fresh scratch database)
+./run_suites.sh
+#   -> tests_statements.py, tests_admin_features.py, tests_accounts_model.py
+
+# or manually, one suite at a time:
 DATABASE_URL="sqlite:///./test_import.db" uvicorn app.main:app --port 8002
-# in another shell
-python tests_admin_features.py
+python tests_statements.py
 ```
 
 The suite covers account creation and role rules, the weekly reminder bookkeeping, Excel and CSV
 round‑trips, hand‑edited files, and every safety rail of the restore endpoint.
+
+```bash
+# 2) live‑deployment checks (opt‑in — talk to the real instance, create/delete only their own records)
+FF_ADMIN_PASSWORD=... python tests_live_accounts.py
+FF_ADMIN_PASSWORD=... python tests_live_savings.py
+FF_ADMIN_PASSWORD=... FF_CONFIRM_PRODUCTION=1 python tests_live_full.py
+
+# 3) persistence check (Render free tier spins down after ~15 min idle)
+#    verifies data survives a spin‑down when DATABASE_URL points to persistent Postgres
+python persistence_check.py
+```

@@ -387,18 +387,26 @@ async function loadTransactions() {
 
   const trx = await api("/api/transactions?" + params.toString());
   const tbody = $("#trx-table tbody");
-  tbody.innerHTML = trx.map(t => `
-    <tr>
+  tbody.innerHTML = trx.map(t => {
+    const isPlaceholder = Number(t.amount) === 0;
+    const amountCell = isPlaceholder
+      ? `<td class="text-end text-muted fst-italic"><span class="badge text-bg-light">${fmtMoney(0)}</span></td>`
+      : `<td class="text-end ${t.type === "Income" ? "text-success" : "text-danger"}">${fmtMoney(t.amount)}</td>`;
+    const descCell = isPlaceholder
+      ? `<td class="text-muted fst-italic">${escapeHtml(t.description || "")} <span class="badge text-bg-secondary">预算占位</span></td>`
+      : `<td>${escapeHtml(t.description || "")}</td>`;
+    return `
+    <tr class="${isPlaceholder ? "table-light" : ""}">
       <td>${t.date}</td>
       <td>${escapeHtml(t.type)}</td>
       <td>${t.category ? escapeHtml(t.category.name) : ""}</td>
-      <td class="text-end ${t.type === "Income" ? "text-success" : "text-danger"}">${fmtMoney(t.amount)}</td>
-      <td>${escapeHtml(t.description || "")}</td>
+      ${amountCell}
+      ${descCell}
       <td class="text-end">
         ${canEdit() ? `<button class="btn btn-sm btn-outline-secondary" data-action="edit-trx" data-id="${t.id}"><i class="bi bi-pencil"></i></button>
         <button class="btn btn-sm btn-outline-danger" data-action="del-trx" data-id="${t.id}"><i class="bi bi-trash"></i></button>` : ""}
       </td>
-    </tr>`).join("");
+    </tr>`}).join("");
 }
 
 function syncTrxSavingsUI() {

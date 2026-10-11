@@ -294,6 +294,11 @@ def add_transaction(data: schemas.TransactionCreate, db: Session = Depends(get_d
         raise HTTPException(status_code=400, detail="Invalid category")
     if data.member_id and not db.query(models.User).filter(models.User.id == data.member_id).first():
         raise HTTPException(status_code=400, detail="Unknown family member")
+    dup = crud.find_recent_duplicate(db, data, current_user.id)
+    if dup:
+        raise HTTPException(status_code=409,
+                            detail=f"Duplicate submission rejected — identical entry already recorded (id={dup.id}). "
+                                   "If this was intentional, wait a few seconds and try again.")
     trx = crud.create_transaction(db, data, current_user.id)
     _refresh_offsets(db)          # keep the month-end sweep in step with the data
     db.refresh(trx)
@@ -419,6 +424,11 @@ def add_saving(data: schemas.SavingsEntryCreate, db: Session = Depends(get_db),
         account_id=data.account_id,
         funded_by=data.funded_by or "income",
     )
+    dup = crud.find_recent_duplicate(db, payload, current_user.id)
+    if dup:
+        raise HTTPException(status_code=409,
+                            detail=f"Duplicate submission rejected — identical saving already recorded (id={dup.id}). "
+                                   "If this was intentional, wait a few seconds and try again.")
     trx = crud.create_transaction(db, payload, current_user.id)
     _refresh_offsets(db)
     db.refresh(trx)
@@ -525,6 +535,11 @@ def add_transfer(data: schemas.TransferEntryCreate, db: Session = Depends(get_db
         account_id=data.account_id,
         funded_by=data.funded_by if data.direction == "in" else None,
     )
+    dup = crud.find_recent_duplicate(db, payload, current_user.id)
+    if dup:
+        raise HTTPException(status_code=409,
+                            detail=f"Duplicate submission rejected — identical transfer already recorded (id={dup.id}). "
+                                   "If this was intentional, wait a few seconds and try again.")
     trx = crud.create_transaction(db, payload, current_user.id)
     _refresh_offsets(db)
     db.refresh(trx)
@@ -555,6 +570,11 @@ def add_loan(data: schemas.LoanEntryCreate, db: Session = Depends(get_db),
         account_id=data.account_id,
         direction=data.direction, lender=data.lender.strip(),
     )
+    dup = crud.find_recent_duplicate(db, payload, current_user.id)
+    if dup:
+        raise HTTPException(status_code=409,
+                            detail=f"Duplicate submission rejected — identical loan entry already recorded (id={dup.id}). "
+                                   "If this was intentional, wait a few seconds and try again.")
     trx = crud.create_transaction(db, payload, current_user.id)
     db.refresh(trx)
     return trx

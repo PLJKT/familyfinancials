@@ -14,6 +14,10 @@ let state = {
   currency: localStorage.getItem("ff_currency") || "IDR",
   rates: null,
   ratesFetchedAt: 0,
+  // submit-in-flight guards (prevent double-click duplicate submissions)
+  trxSaving: false, savingSaving: false, transferSaving: false,
+  accountSaving: false, loanSaving: false, assetSaving: false,
+  liabilitySaving: false, userSaving: false, pwdSaving: false,
 };
 
 const CURRENCY_META = {
@@ -1608,6 +1612,24 @@ async function deleteLiability(id) {
 }
 
 // ---------- wire up ----------
+// Submit-in-flight guard: wraps async form handlers so double-click / repeated
+// Enter cannot fire the same POST twice. Disables the form's submit button while
+// the request is running and ignores re-entrant calls.
+function guardSubmit(fn, flagKey) {
+  return async (e) => {
+    e.preventDefault();
+    if (state[flagKey]) return;
+    state[flagKey] = true;
+    const btn = e.target && e.target.querySelector ? e.target.querySelector('button[type="submit"]') : null;
+    if (btn) btn.disabled = true;
+    try {
+      await fn(e);
+    } finally {
+      state[flagKey] = false;
+      if (btn) btn.disabled = false;
+    }
+  };
+}
 // Global event delegation for dynamically-rendered action buttons.
 // Inline onclick/onchange attributes are blocked by the app's CSP
 // (script-src 'self' without 'unsafe-inline'), so all dynamic actions
@@ -1657,7 +1679,7 @@ document.addEventListener("DOMContentLoaded", () => {
     e.preventDefault(); showPage(a.dataset.page);
   }));
   $("#add-trx-btn").addEventListener("click", openAddTransaction);
-  $("#trx-form").addEventListener("submit", saveTransaction);
+  $("#trx-form").addEventListener("submit", guardSubmit(saveTransaction, "trxSaving"));
   $("#trx-type-input").addEventListener("change", syncTrxSavingsUI);
   $("#trx-filter-btn").addEventListener("click", loadTransactions);
   $("#rep-run-btn").addEventListener("click", runReport);
@@ -1670,18 +1692,18 @@ document.addEventListener("DOMContentLoaded", () => {
   // savings
   $("#quick-saving-btn").addEventListener("click", () => openSaving());
   $("#add-saving-btn").addEventListener("click", () => openSaving());
-  $("#saving-form").addEventListener("submit", saveSaving);
+  $("#saving-form").addEventListener("submit", guardSubmit(saveSaving, "savingSaving"));
   $("#run-offsets-btn").addEventListener("click", runOffsets);
   $("#add-transfer-btn").addEventListener("click", () => openTransfer("in"));
   $("#add-transfer-btn-2").addEventListener("click", () => openTransfer("in"));
-  $("#transfer-form").addEventListener("submit", saveTransfer);
+  $("#transfer-form").addEventListener("submit", guardSubmit(saveTransfer, "transferSaving"));
   $("#tr-dir").addEventListener("change", toggleTransferFunding);
 
   // accounts and loans
   $("#add-account-btn").addEventListener("click", () => openAccount());
-  $("#account-form").addEventListener("submit", saveAccount);
+  $("#account-form").addEventListener("submit", guardSubmit(saveAccount, "accountSaving"));
   $("#add-loan-btn").addEventListener("click", openLoan);
-  $("#loan-form").addEventListener("submit", saveLoan);
+  $("#loan-form").addEventListener("submit", guardSubmit(saveLoan, "loanSaving"));
 
   // financial statements
   $$("#statement-tabs .nav-link").forEach(a => a.addEventListener("click", (e) => {
@@ -1693,15 +1715,15 @@ document.addEventListener("DOMContentLoaded", () => {
   $("#bs-run-btn").addEventListener("click", loadBalanceSheet);
   $("#print-statement-btn").addEventListener("click", () => window.print());
   $("#add-asset-btn").addEventListener("click", () => openAsset());
-  $("#asset-form").addEventListener("submit", saveAsset);
+  $("#asset-form").addEventListener("submit", guardSubmit(saveAsset, "assetSaving"));
   $("#add-liability-btn").addEventListener("click", () => openLiability());
-  $("#liability-form").addEventListener("submit", saveLiability);
+  $("#liability-form").addEventListener("submit", guardSubmit(saveLiability, "liabilitySaving"));
 
   // admin: users
   $("#add-user-btn").addEventListener("click", openAddUser);
-  $("#user-form").addEventListener("submit", saveUser);
+  $("#user-form").addEventListener("submit", guardSubmit(saveUser, "userSaving"));
   $("#gen-password-btn").addEventListener("click", () => { $("#new-password").value = randomPassword(); });
-  $("#pwd-form").addEventListener("submit", savePassword);
+  $("#pwd-form").addEventListener("submit", guardSubmit(savePassword, "pwdSaving"));
 
   // admin: backup & restore
   $("#backup-download-btn").addEventListener("click", downloadBackupNow);

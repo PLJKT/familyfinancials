@@ -1,10 +1,33 @@
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Dict, List, Optional, Tuple
 from sqlalchemy import func, case, cast, String
 from sqlalchemy.orm import Session, joinedload
 
 from . import models, schemas
+
+
+# ---------- Duplicate guard ----------
+def find_recent_duplicate(db: Session, data: schemas.TransactionCreate,
+                          user_id: Optional[int], window_seconds: int = 8) -> Optional[models.Transaction]:
+    """Return the most recent identical transaction created by the same user
+    within the last `window_seconds`. Used to reject accidental duplicate
+    submissions (double-click / repeated POST) without blocking legitimate
+    entries that differ in date, amount, category or description."""
+    cutoff = datetime.utcnow() - timedelta(seconds=window_seconds)
+    return (
+        db.query(models.Transaction)
+        .filter(
+            models.Transaction.created_by == user_id,
+            models.Transaction.date == data.date,
+            models.Transaction.type == data.type,
+            models.Transaction.category_id == data.category_id,
+            models.Transaction.amount == data.amount,
+            models.Transaction.created_at >= cutoff,
+        )
+        .order_by(models.Transaction.created_at.desc())
+        .first()
+    )
 
 
 # ---------- Users ----------

@@ -261,6 +261,16 @@ The repository includes pre‑prepared seed data in `data/`:
 
 On first startup the app seeds these automatically if the database is empty.
 
+### Data conventions (audited 2026-10)
+
+- **Zero‑amount rows** are *budget placeholders* (e.g. a category left blank in a budget month).
+  They never affect totals; the Transactions page marks them with a "预算占位" badge.
+- **Others (5 % contingency)** is an estimated, non‑actual expense equal to 5 % of the month's other
+  (non‑Others) expenses — it exists so un‑recorded spending is approximated; it is *not* a real entry.
+- **Withdrawal rows on category `Saving`** are the automatic month‑end sweep, not data‑entry errors.
+- The **duplicate‑submission guard** (8 s window, per user) exists because rapid double‑clicks had
+  produced identical rows; legitimate repeats must wait a few seconds.
+
 ---
 
 ## 8. Allocation page (Standard & Poor's family asset quadrant)
@@ -297,6 +307,10 @@ under‑funded buckets (plus a 10 % buffer) instead of waiting for new surplus.
   click/change delegate. **Do not reintroduce inline event handlers.**
 - **Confirm dialogs**: `window.confirm()` is silently disabled in some embedded browsers; use the
   `uiConfirm()` Bootstrap‑modal helper for anything destructive.
+- **Duplicate‑submission guard (v12)**: every `<form>` submit handler is wrapped in `guardSubmit(fn, flag)`
+  — the submit button is disabled and a state flag is set while the request is in flight, so double‑clicking
+  or pressing Enter repeatedly cannot fire the same POST twice. **Keep wrapping any new form handler the
+  same way** (add a flag key to `state`).
 - **Currency display**: the page converts IDR amounts to USD/CNY on the fly using `open.er-api.com`
   rates (cached); `fmtMoney()` is the single formatting helper (defined once — do not redefine).
 
@@ -317,18 +331,18 @@ under‑funded buckets (plus a 10 % buffer) instead of waiting for new surplus.
 | `GET`  | `/api/categories` | List categories. |
 | `POST` | `/api/categories` | Create category (editor+). |
 | `GET`  | `/api/transactions` | List transactions with filters. |
-| `POST` | `/api/transactions` | Create transaction (editor+). |
+| `POST` | `/api/transactions` | Create transaction (editor+). **409 if an identical entry was created by the same user in the last 8 seconds** (duplicate‑submission guard). |
 | `PUT`  | `/api/transactions/{id}` | Update transaction (editor+). |
 | `DELETE` | `/api/transactions/{id}` | Delete transaction (editor+). |
 | `POST` | `/api/reports/summary` | Aggregated report (`group_by` = month/year/category). |
 | `GET`  | `/api/accounts` | Accounts with opening balance, movements and balance. |
 | `POST` | `/api/accounts` · `PUT`/`DELETE` `/api/accounts/{id}` | Add / edit / remove an account (editor+). |
-| `POST` | `/api/transfers` | Move money between cash and savings (`direction` in/out, editor+). |
-| `POST` | `/api/loans` | Record borrowing or a repayment (editor+). |
+| `POST` | `/api/transfers` | Move money between cash and savings (`direction` in/out, editor+). **409 on identical repeat within 8 s.** |
+| `POST` | `/api/loans` | Record borrowing or a repayment (editor+). **409 on identical repeat within 8 s.** |
 | `GET`  | `/api/loans` | Outstanding balance per lender. |
 | `GET`  | `/api/reconciliation` | Month-by-month reconciliation with gap flags. |
 | `GET`  | `/api/savings/summary` | Savings per month **and per family member** + sweep status. |
-| `POST` | `/api/savings/entries` | Record a saving (editor+). |
+| `POST` | `/api/savings/entries` | Record a saving (editor+). **409 on identical repeat within 8 s.** |
 | `POST` | `/api/admin/sweep/run` | Re-apply the automatic month-end sweep (admin+). |
 | `POST` | `/api/admin/migrate-accounts-model` | One-off data migration (master; dry run by default). |
 | `GET`  | `/api/statements/income` | Income statement for a period (`start`, `end`). |
